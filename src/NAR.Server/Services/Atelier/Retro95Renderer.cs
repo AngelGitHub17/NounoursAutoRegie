@@ -160,6 +160,9 @@ public sealed class Retro95Renderer(Microsoft.Extensions.Options.IOptions<NarOpt
         private readonly double _labelAt, _titleAt, _subtitleAt, _logoAt, _windowOpenAt, _windowCloseAt;
         private readonly List<double> _cuts = new();
 
+        // Après le dernier coup d'une fin qui résonne, la mosaïque se fige avec le son.
+        private readonly double _freezeAfter = double.MaxValue;
+
         public Scene(AtelierJob job, SKBitmap? logo)
         {
             _job = job;
@@ -190,6 +193,35 @@ public sealed class Retro95Renderer(Microsoft.Extensions.Options.IOptions<NarOpt
             _titleAt = BeatAfter(Math.Max(_labelAt + _period * 1.5, d * 0.22), strong: false);
             _subtitleAt = BeatAfter(_titleAt + _period * 1.5, strong: false);
             _logoAt = job.Kind == AtelierKind.Ident ? BeatAfter(d * 0.08, strong: false) : BeatAfter(Math.Max(d - Math.Max(1.6, _period * 3), d * 0.55), strong: false);
+
+            if (job.Kind == AtelierKind.Jingle)
+            {
+                // Jingle : le titre arrive vers la fin, selon la façon dont le son se termine.
+                //  - fin qui résonne : le titre tombe sur le dernier coup et reste pendant la résonance ;
+                //  - fin nette : le titre arrive assez tôt pour être lu avant la coupure, sur un temps fort.
+                var ending = job.Rhythm.Ending(d);
+                var read = Math.Min(Math.Max(1.8, _period * 3), d * 0.45);
+                double BeatBefore(double t, bool strong)
+                {
+                    var list = strong && downbeats.Count > 0 ? downbeats : _beats.ToList();
+                    return list.LastOrDefault(b => b <= t + 0.01, double.NaN);
+                }
+                double at;
+                if (ending.Resonates) _freezeAfter = ending.FinalHit + 0.05;
+                if (ending.Resonates && d - ending.FinalHit >= read) at = ending.FinalHit;
+                else
+                {
+                    var latest = Math.Min(ending.MusicEnd, d) - read;
+                    // Temps fort si l'on n'avance pas de plus d'une mesure, sinon le temps le plus proche.
+                    var strongBeat = BeatBefore(latest, strong: true);
+                    at = !double.IsNaN(strongBeat) && latest - strongBeat <= _period * 4.1 ? strongBeat : BeatBefore(latest, strong: false);
+                    if (double.IsNaN(at)) at = latest;
+                }
+                _titleAt = Math.Clamp(at, Math.Min(_labelAt + _period, d * 0.5), Math.Max(d - 1.0, 0));
+                var left = d - _titleAt;
+                _subtitleAt = left > _period * 2 + 0.6 ? _titleAt + _period : _titleAt + Math.Min(0.25, left / 4);
+                _logoAt = Math.Min(Math.Max(_titleAt + _period * 2, _logoAt), Math.Max(d - 0.7, _titleAt));
+            }
 
             if (job.Kind == AtelierKind.BandeAnnonce)
             {
@@ -284,6 +316,7 @@ public sealed class Retro95Renderer(Microsoft.Extensions.Options.IOptions<NarOpt
             while (_nextBeat < _beats.Length && _beats[_nextBeat] <= t)
             {
                 var at = _beats[_nextBeat];
+                if (at > _freezeAfter) { _nextBeat++; continue; }
                 var strength = _nextBeat < _job.Rhythm.BeatStrengths.Length ? _job.Rhythm.BeatStrengths[_nextBeat] : 0.6;
                 var downbeat = _job.Rhythm.IsDownbeat(_nextBeat);
                 var energy = EnergyAt(at);
@@ -314,7 +347,8 @@ public sealed class Retro95Renderer(Microsoft.Extensions.Options.IOptions<NarOpt
             }
             while (_nextAccent < _job.Rhythm.Accents.Length && _job.Rhythm.Accents[_nextAccent] <= t)
             {
-                _leaves[_random.Next(_leaves.Count)].FlashAt = _job.Rhythm.Accents[_nextAccent];
+                if (_job.Rhythm.Accents[_nextAccent] <= _freezeAfter)
+                    _leaves[_random.Next(_leaves.Count)].FlashAt = _job.Rhythm.Accents[_nextAccent];
                 _nextAccent++;
             }
         }

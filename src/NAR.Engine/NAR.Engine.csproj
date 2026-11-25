@@ -4,6 +4,16 @@
     <ProjectReference Include="..\NAR.Core\NAR.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="SkiaSharp" Version="2.88.8" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="2.88.8" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Mêmes polices que l'atelier (Barlow Condensed, licence OFL). -->
+    <None Include="..\NAR.Server\Resources\Fonts\*" Link="Resources\Fonts\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>

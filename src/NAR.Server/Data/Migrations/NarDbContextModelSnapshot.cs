@@ -220,6 +220,35 @@ namespace NAR.Server.Data.Migrations
                     b.Property<int>("Number")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("OverlayClock")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("OverlayCorner")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("OverlayLogo")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("OverlayLogoOpacity")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<double>("OverlayLogoSize")
+                        .HasColumnType("REAL");
+
+                    b.Property<bool>("OverlayRating")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("OverlayRatingAlways")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("OverlayUpNext")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("OverlayUpNextBefore")
+                        .HasColumnType("INTEGER");
+
                     b.Property<double>("PreloadSeconds")
                         .HasColumnType("REAL");
 
@@ -339,6 +368,9 @@ namespace NAR.Server.Data.Migrations
                     b.Property<string>("SeriesName")
                         .HasMaxLength(300)
                         .HasColumnType("TEXT");
+
+                    b.Property<int?>("Signaletique")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int>("Status")
                         .HasColumnType("INTEGER");

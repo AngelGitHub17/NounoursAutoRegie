@@ -49,6 +49,7 @@ public sealed class EngineConfigBuilder(IDbContextFactory<NarDbContext> dbFactor
             PreloadSeconds = channel.PreloadSeconds,
             Filler = channel.FillerAsset is { Status: AssetStatus.Pret } filler ? smb.Playable(filler) : null,
             AsRunDirectory = Path.Combine(dir, "asrun"),
+            Overlays = Overlays(channel, dir),
             Playlist = new PlaylistConfig
             {
                 Loop = channel.Loop,
@@ -64,12 +65,35 @@ public sealed class EngineConfigBuilder(IDbContextFactory<NarDbContext> dbFactor
                         Out = e.OutPoint is { } x && x > TimeSpan.Zero ? x.ToString("c", CultureInfo.InvariantCulture) : null,
                         StartAt = e.StartMode == StartMode.HeureFixe && e.FixedStart is { } at ? at.ToString("O", CultureInfo.InvariantCulture) : null,
                         GainDb = e.Asset.GainDb,
+                        Overlay = e.Asset.Kind is not (AssetKind.Spot or AssetKind.Jingle or AssetKind.BandeAnnonce or AssetKind.Habillage),
+                        Programme = e.Asset.Kind is AssetKind.Programme or AssetKind.Episode or AssetKind.Film,
+                        Rating = Signaletique.Of(e.Asset),
                     })
                     .ToList(),
             },
         };
         config.Revision = Fingerprint(config);
         return config;
+    }
+
+    private static OverlayConfig Overlays(Channel channel, string dir)
+    {
+        var logo = Path.Combine(dir, "logo.png");
+        var hasLogo = channel.OverlayLogo && channel.HasLogo && File.Exists(logo);
+        return new OverlayConfig
+        {
+            Logo = hasLogo ? logo : null,
+            LogoVersion = hasLogo ? File.GetLastWriteTimeUtc(logo).Ticks : 0,
+            Corner = channel.OverlayCorner,
+            LogoHeightPercent = channel.OverlayLogoSize,
+            LogoOpacity = channel.OverlayLogoOpacity,
+            Clock = channel.OverlayClock,
+            UpNext = channel.OverlayUpNext,
+            UpNextBeforeEndSeconds = Math.Max(15, channel.OverlayUpNextBefore),
+            UpNextDurationSeconds = 10,
+            Rating = channel.OverlayRating,
+            RatingAlways = channel.OverlayRatingAlways,
+        };
     }
 
     public int EnginePort(Channel channel) => channel.EnginePort > 0 ? channel.EnginePort : options.Value.EngineBasePort + channel.Id;

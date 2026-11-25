@@ -4,6 +4,7 @@ using NAR.Core.Media;
 using NAR.Core.Scheduling;
 using NAR.Core.Status;
 using NAR.Engine.Config;
+using NAR.Engine.Overlay;
 
 namespace NAR.Engine.Playout;
 
@@ -86,6 +87,10 @@ public sealed class PlayoutEngine(
 
         var slate = Slate.CreateColorBars(format);
         var video = new byte[format.VideoFrameBytes];
+        // Image habillée : copie de l'image source (qui peut être figée et resservie) + incrustations.
+        var dressed = new byte[format.VideoFrameBytes];
+        using var overlays = new OverlayCompositor(format, loggerFactory.CreateLogger<OverlayCompositor>());
+        overlays.Configure(config.Overlays, config.Resolve);
         var audio = new byte[format.MaxAudioBytesPerFrame];
         Buffer.BlockCopy(slate, 0, video, 0, slate.Length);
 
@@ -135,12 +140,48 @@ public sealed class PlayoutEngine(
             currentItem = null;
         }
 
+        OverlayContext OverlayContextAt(long f)
+        {
+            var wall = epoch + rate.TimeFromFrames(f);
+            if (currentItem is null)
+                return new OverlayContext(wall, OnAir: state == AntennaState.Filler, Overlay: state == AntennaState.Filler,
+                    IsProgramme: false, Rating: null, ElapsedSeconds: 10, RemainingSeconds: 10, null, null);
+
+            // Fin effective : la fin naturelle, ou la coupure par un élément à horaire fixe.
+            var end = conductor.CurrentEndFrame;
+            var nextIndex = conductor.NextIndex;
+            if (nextIndex >= 0 && items[nextIndex].FixedStartFrame is { } cut && cut > f && cut < end) end = cut;
+            var remaining = Math.Max(0, end - f) / rate.FramesPerSecond;
+            var elapsed = Math.Max(0, currentItem.DurationFrames - (conductor.CurrentEndFrame - f)) / rate.FramesPerSecond;
+
+            // Prochain programme (les pubs et jingles intercalés sont sautés) et son heure prévue.
+            string? nextTitle = null;
+            DateTimeOffset? nextStart = null;
+            var t = end;
+            for (var (i, n) = (nextIndex, 0); i >= 0 && n < items.Count; n++)
+            {
+                var it = items[i];
+                if (it.FixedStartFrame is { } fs && fs > t) t = fs;
+                if (it.DurationFrames > 0 && it.Programme)
+                {
+                    nextTitle = it.Title;
+                    nextStart = epoch + rate.TimeFromFrames(t);
+                    break;
+                }
+                t += it.DurationFrames;
+                i = i + 1 < items.Count ? i + 1 : plan.Loop ? 0 : -1;
+            }
+            return new OverlayContext(wall, OnAir: true, currentItem.Overlay, currentItem.Programme, currentItem.Rating,
+                elapsed, remaining, nextTitle, nextStart);
+        }
+
         void ApplyPlan(PlayoutPlan next)
         {
             var fillerChanged = next.FillerPath != plan.FillerPath;
             plan = next;
             items = next.Items;
             conductor.Reload(items, next.Loop);
+            overlays.Configure(next.Config.Overlays, next.Config.Resolve);
 
             // Les préchargements devenus inutiles (élément retiré ou modifié) sont libérés.
             var keep = items.Select(Key).ToHashSet();
@@ -307,7 +348,17 @@ public sealed class PlayoutEngine(
                     encoderRestarts++;
                 }
                 if (!encoder.HasFailed)
-                    await encoder.SendAsync(video, audio.AsMemory(0, audioBytes), ct);
+                {
+                    var context = OverlayContextAt(frame);
+                    var output = video;
+                    if (overlays.IsActive(context))
+                    {
+                        Buffer.BlockCopy(video, 0, dressed, 0, video.Length);
+                        overlays.Apply(dressed, context);
+                        output = dressed;
+                    }
+                    await encoder.SendAsync(output, audio.AsMemory(0, audioBytes), ct);
+                }
 
                 // --- Statut ------------------------------------------------------------------
                 var target = rate.TimeFromFrames(frame + 1);
@@ -426,7 +477,10 @@ public sealed class PlayoutEngine(
                 InFrames: rate.FramesFloor(inPoint),
                 DurationFrames: Math.Max(0, rate.FramesFloor(duration)),
                 FixedStartFrame: fixedStart,
-                GainDb: it.GainDb));
+                GainDb: it.GainDb,
+                Overlay: it.Overlay,
+                Programme: it.Programme,
+                Rating: it.Rating));
         }
         return new PlayoutPlan(config.Revision, list, byId, config.Playlist.Loop, fillerPath, fillerProbe, config);
     }

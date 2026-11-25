@@ -228,10 +228,19 @@
                                     <option value="@k">@Fmt.Kind(k)</option>
                                 }
                             </select>
+                            <select @bind="a.Signaletique" title="Signalétique jeunesse" style="margin-top:4px">
+                                <option value="">Signalétique : auto@(Signaletique.FromRating(a.Rating) is { } auto ? $" (-{auto})" : "")</option>
+                                <option value="0">Tous publics</option>
+                                @foreach (var v in Signaletique.Values) { <option value="@v">-@v</option> }
+                            </select>
                         }
                         else
                         {
                             @Fmt.Kind(a.Kind)
+                            @if (Signaletique.Of(a) is { } sig)
+                            {
+                                <span class="badge" title="Signalétique jeunesse" style="margin-left:6px">-@sig</span>
+                            }
                         }
                     </td>
                     <td class="num">@(a.Duration > TimeSpan.Zero ? Fmt.Duration(a.Duration) : "—")</td>
@@ -409,6 +418,7 @@
         {
             entity.Title = string.IsNullOrWhiteSpace(a.Title) ? entity.Title : a.Title.Trim();
             entity.Kind = a.Kind;
+            entity.Signaletique = a.Signaletique;
             await db.SaveChangesAsync();
         }
         _editing = null;

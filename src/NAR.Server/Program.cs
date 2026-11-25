@@ -16,13 +16,15 @@ if (args.Length >= 2 && args[0] == "--analyser")
     var rhythm = await new NAR.Server.Services.Atelier.AudioAnalyzer(opts).AnalyzeAsync(args[1], CancellationToken.None);
     Console.WriteLine($"Durée {rhythm.Duration:0.00} s · {rhythm.Bpm} BPM · {rhythm.Beats.Length} temps · 1er temps fort : phase {rhythm.DownbeatPhase} · {rhythm.Accents.Length} attaques");
     Console.WriteLine("Temps : " + string.Join(" ", rhythm.Beats.Take(16).Select(b => b.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture))));
+    var ending = rhythm.Ending(Math.Min(rhythm.Duration, 20));
+    Console.WriteLine($"Fin : {ending.Label} · musique jusqu'à {ending.MusicEnd:0.00} s · dernier coup {ending.FinalHit:0.00} s");
     if (args.Length >= 3)
     {
         var job = new NAR.Server.Services.Atelier.AtelierJob(
             Enum.Parse<NAR.Server.Services.Atelier.AtelierKind>(args.Length >= 4 ? args[3] : "Jingle"),
             "Le Grand Film", "Ce soir · 20H50", "Cinéma", NAR.Server.Services.Atelier.Palettes.Get("retro95"),
             args[1], rhythm, args.Length >= 5 ? args[4] : null, false, 1280, 720, new NAR.Core.Media.FrameRate(25),
-            Math.Min(rhythm.Duration, 20), args.Length >= 6 ? args[5] : null, [5, 20, 35, 50], 42, args[2]);
+            Math.Min(rhythm.Duration, 20), args.Length >= 6 ? args[5] : null, [5, 20, 35, 50], 42, Path.GetFullPath(args[2]));
         await new NAR.Server.Services.Atelier.Retro95Renderer(opts, Microsoft.Extensions.Logging.Abstractions.NullLogger<NAR.Server.Services.Atelier.Retro95Renderer>.Instance)
             .RenderAsync(job, null, CancellationToken.None);
         Console.WriteLine($"Rendu : {args[2]}");

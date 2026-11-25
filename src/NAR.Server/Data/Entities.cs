@@ -59,6 +59,17 @@ public class Channel
     /// <summary>Logo de la chaîne (logo.png dans son dossier), utilisé par l'atelier d'habillage.</summary>
     public bool HasLogo { get; set; }
 
+    // Habillage incrusté sur l'antenne.
+    public bool OverlayLogo { get; set; } = true;
+    [MaxLength(16)] public string OverlayCorner { get; set; } = "haut-droite";
+    public double OverlayLogoSize { get; set; } = 9;
+    public int OverlayLogoOpacity { get; set; } = 85;
+    public bool OverlayClock { get; set; }
+    public bool OverlayUpNext { get; set; } = true;
+    public int OverlayUpNextBefore { get; set; } = 120;
+    public bool OverlayRating { get; set; } = true;
+    public bool OverlayRatingAlways { get; set; }
+
     public int? FillerAssetId { get; set; }
     public MediaAsset? FillerAsset { get; set; }
 
@@ -150,6 +161,9 @@ public class MediaAsset
     public int? Year { get; set; }
     [MaxLength(2000)] public string? Overview { get; set; }
     [MaxLength(32)] public string? Rating { get; set; }
+
+    /// <summary>Signalétique forcée : 0 = tous publics, 10/12/16/18 ; null = d'après la classification (Rating).</summary>
+    public int? Signaletique { get; set; }
     [MaxLength(300)] public string? Genres { get; set; }
     public DateTimeOffset AddedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? AnalyzedAt { get; set; }

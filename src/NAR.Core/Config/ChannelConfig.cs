@@ -31,6 +31,9 @@ public sealed class ChannelConfig
     public string? Filler { get; set; }
 
     public string AsRunDirectory { get; set; } = "asrun";
+
+    /// <summary>Habillage incrusté sur l'antenne (logo, horloge, « À suivre », signalétique). Rechargé à chaud.</summary>
+    public OverlayConfig Overlays { get; set; } = new();
     public PlaylistConfig Playlist { get; set; } = new();
 
     /// <summary>Dossier du fichier de configuration : les chemins relatifs partent de là.</summary>
@@ -104,6 +107,44 @@ public sealed class HlsConfig
     public int ListSize { get; set; } = 15;
 }
 
+public sealed class OverlayConfig
+{
+    /// <summary>Logo PNG de la chaîne (transparent de préférence). Absent = pas de logo.</summary>
+    public string? Logo { get; set; }
+
+    /// <summary>Change quand le fichier du logo est remplacé (même chemin) : force la relecture.</summary>
+    public long LogoVersion { get; set; }
+
+    /// <summary>Coin du logo : "haut-droite", "haut-gauche", "bas-droite", "bas-gauche".</summary>
+    public string Corner { get; set; } = "haut-droite";
+
+    /// <summary>Hauteur du logo en % de la hauteur de l'image.</summary>
+    public double LogoHeightPercent { get; set; } = 9;
+
+    /// <summary>Opacité du logo en % (100 = opaque).</summary>
+    public int LogoOpacity { get; set; } = 85;
+
+    /// <summary>Horloge sous le logo.</summary>
+    public bool Clock { get; set; }
+
+    /// <summary>Bandeau « À suivre » avant la fin d'un programme, avec le titre du programme suivant.</summary>
+    public bool UpNext { get; set; } = true;
+
+    /// <summary>Le bandeau apparaît ce nombre de secondes avant la fin du programme.</summary>
+    public double UpNextBeforeEndSeconds { get; set; } = 120;
+
+    /// <summary>Durée d'affichage du bandeau.</summary>
+    public double UpNextDurationSeconds { get; set; } = 10;
+
+    /// <summary>Pictogrammes de signalétique jeunesse (-10, -12, -16, -18).</summary>
+    public bool Rating { get; set; } = true;
+
+    /// <summary>true = pendant tout le programme ; false = la première minute de chaque partie.</summary>
+    public bool RatingAlways { get; set; }
+
+    public bool Any => !string.IsNullOrWhiteSpace(Logo) || Clock || UpNext || Rating;
+}
+
 public sealed class PlaylistConfig
 {
     /// <summary>Recommencer au début quand le conducteur est fini (pratique pour les tests d'endurance).</summary>
@@ -133,6 +174,15 @@ public sealed class ItemConfig
     public string? StartAt { get; set; }
 
     public double GainDb { get; set; }
+
+    /// <summary>Habillage incrusté (logo, horloge, signalétique) sur cet élément. Faux pour les pubs, jingles…</summary>
+    public bool Overlay { get; set; } = true;
+
+    /// <summary>Programme (film, épisode, émission) : c'est lui qu'annonce le bandeau « À suivre ».</summary>
+    public bool Programme { get; set; } = true;
+
+    /// <summary>Signalétique jeunesse : 10, 12, 16 ou 18 (absent = tous publics).</summary>
+    public int? Rating { get; set; }
 
     public static TimeSpan? ParseTime(string? text) =>
         string.IsNullOrWhiteSpace(text)

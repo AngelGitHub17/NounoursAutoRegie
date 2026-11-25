@@ -19,6 +19,37 @@ public sealed record RhythmAnalysis(
 {
     public bool IsDownbeat(int beatIndex) => beatIndex % 4 == DownbeatPhase;
 
+    /// <summary>
+    /// Comment le son se termine avant <paramref name="until"/> (la durée de la création) :
+    /// fin de la musique proprement dite (dernier moment où l'énergie reste à moins de
+    /// 12 dB du maximum), longueur de la queue (résonance, réverbération) et dernier coup
+    /// marqué. Une queue courte = fin nette ; une queue longue = fin qui résonne.
+    /// </summary>
+    public SoundEnding Ending(double until)
+    {
+        until = Math.Min(until, Duration);
+        if (Energy.Length == 0 || EnergyStep <= 0) return new SoundEnding(until, 0, Beats.LastOrDefault(b => b < until, until));
+        var count = Math.Min(Energy.Length, (int)Math.Ceiling(until / EnergyStep));
+        if (count < 3) return new SoundEnding(until, 0, until);
+        // Lissage sur 3 cases (0,3 s) pour ne pas confondre un silence entre deux coups avec la fin.
+        var smooth = new double[count];
+        for (var i = 0; i < count; i++)
+        {
+            double sum = 0; var n = 0;
+            for (var j = Math.Max(0, i - 1); j <= Math.Min(count - 1, i + 1); j++) { sum += Energy[j]; n++; }
+            smooth[i] = sum / n;
+        }
+        var peak = smooth.Max();
+        if (peak <= 1e-6) return new SoundEnding(until, 0, until);
+        var last = count - 1;
+        while (last > 0 && smooth[last] < peak * 0.25) last--;
+        var musicEnd = Math.Min(until, (last + 1) * EnergyStep);
+        // Dernier coup : la dernière attaque marquée (sinon le dernier temps) avant la fin de la musique.
+        var hit = Accents.Where(a => a <= musicEnd + 0.15 && a >= musicEnd - 2.5).DefaultIfEmpty(double.NaN).Max();
+        if (double.IsNaN(hit)) hit = Beats.Where(b => b <= musicEnd + 0.1).DefaultIfEmpty(musicEnd).Max();
+        return new SoundEnding(musicEnd, until - musicEnd, Math.Min(hit, until));
+    }
+
     /// <summary>Grille régulière quand il n'y a pas de son (ou qu'aucun rythme n'est trouvé).</summary>
     public static RhythmAnalysis Grid(double duration, double bpm = 120)
     {
@@ -27,6 +58,17 @@ public sealed record RhythmAnalysis(
         return new RhythmAnalysis(duration, bpm, beats, beats.Select(_ => 0.7).ToArray(), 0, [], 0.1,
             Enumerable.Repeat(0.6, (int)(duration / 0.1) + 1).ToArray());
     }
+}
+
+/// <param name="MusicEnd">Fin de la musique (en s), avant la queue.</param>
+/// <param name="Tail">Durée de la queue après la musique : résonance, réverbération, silence.</param>
+/// <param name="FinalHit">Dernier coup marqué (en s).</param>
+public sealed record SoundEnding(double MusicEnd, double Tail, double FinalHit)
+{
+    /// <summary>Au-delà de 1,2 s de queue, on considère que le son « résonne » plutôt qu'il ne s'arrête net.</summary>
+    public bool Resonates => Tail >= 1.2;
+
+    public string Label => Resonates ? $"fin qui résonne ({Tail:0.0} s)".Replace('.', ',') : "fin nette";
 }
 
 /// <summary>

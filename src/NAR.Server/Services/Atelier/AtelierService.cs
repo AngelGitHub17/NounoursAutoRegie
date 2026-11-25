@@ -21,6 +21,17 @@ public sealed class AtelierService(
     ILogger<AtelierService> logger)
 {
     public static readonly string[] AudioExtensions = [".mp3", ".wav", ".ogg", ".oga", ".flac", ".m4a", ".aac", ".opus", ".wma"];
+    /// <summary>« fin nette » ou « fin qui résonne (2,1 s) », d'après l'analyse enregistrée.</summary>
+    public static string EndingLabel(AtelierSound sound)
+    {
+        try
+        {
+            var rhythm = JsonSerializer.Deserialize<RhythmAnalysis>(sound.AnalysisJson, Json);
+            return rhythm?.Ending(rhythm.Duration).Label ?? "";
+        }
+        catch (JsonException) { return ""; }
+    }
+
     public static readonly JsonSerializerOptions Json = new() { NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals };
 
     private readonly SemaphoreSlim _signal = new(0);

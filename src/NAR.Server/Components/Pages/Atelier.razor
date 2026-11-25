@@ -153,7 +153,7 @@
                     <b class="grow">@s.Name</b>
                     @if (CanEdit) { <button class="btn sm danger" @onclick="() => Workshop.DeleteSoundAsync(s.Id)">✕</button> }
                 </div>
-                <div class="small muted">@Fmt.Duration(TimeSpan.FromSeconds(s.Duration)) · <b>@s.Bpm BPM</b> · @s.BeatCount temps</div>
+                <div class="small muted">@Fmt.Duration(TimeSpan.FromSeconds(s.Duration)) · <b>@s.Bpm BPM</b> · @s.BeatCount temps · @AtelierService.EndingLabel(s)</div>
                 <audio controls preload="none" src="/atelier/sons/@s.Id" style="width:100%;margin-top:6px"></audio>
             </div>
         }

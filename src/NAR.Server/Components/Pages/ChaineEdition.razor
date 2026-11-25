@@ -47,9 +47,38 @@ else
                     <span class="muted">Pas encore de logo.</span>
                 }
                 <InputFile OnChange="UploadLogoAsync" accept="image/png,image/jpeg,image/webp" />
-                <span class="small muted">PNG transparent conseillé. Utilisé par l'atelier d'habillage (cartouche Rétro 95).</span>
+                <span class="small muted">PNG transparent conseillé. Utilisé à l'antenne (incrustation) et par l'atelier d'habillage (cartouche Rétro 95).</span>
             </div>
         }
+
+        <h2>Habillage antenne</h2>
+        <p class="small muted" style="margin-top:-6px">Incrusté en direct sur les programmes (jamais sur les pubs, jingles et bandes-annonces). Les changements passent à l'antenne en quelques secondes, sans coupure.</p>
+        <div class="form-grid">
+            <label class="check"><input type="checkbox" @bind="_channel.OverlayLogo" disabled="@(!_channel.HasLogo)" /> Logo en incrustation@(_channel.HasLogo ? "" : " (envoyez d'abord un logo)")</label>
+            <label class="field"><span>Position</span>
+                <select @bind="_channel.OverlayCorner">
+                    <option value="haut-droite">En haut à droite</option>
+                    <option value="haut-gauche">En haut à gauche</option>
+                    <option value="bas-droite">En bas à droite</option>
+                    <option value="bas-gauche">En bas à gauche</option>
+                </select>
+            </label>
+            <label class="field"><span>Taille du logo (% de la hauteur) : @_channel.OverlayLogoSize.ToString("0")</span><input type="range" min="4" max="18" step="1" @bind="_channel.OverlayLogoSize" @bind:event="oninput" /></label>
+            <label class="field"><span>Opacité : @_channel.OverlayLogoOpacity %</span><input type="range" min="30" max="100" step="5" @bind="_channel.OverlayLogoOpacity" @bind:event="oninput" /></label>
+            <label class="check"><input type="checkbox" @bind="_channel.OverlayClock" /> Horloge sous le logo</label>
+            <label class="check"><input type="checkbox" @bind="_channel.OverlayUpNext" /> Bandeau « À suivre » avant la fin des programmes</label>
+            <label class="field"><span>« À suivre » apparaît avant la fin</span>
+                <select @bind="_channel.OverlayUpNextBefore" disabled="@(!_channel.OverlayUpNext)">
+                    <option value="30">30 s</option>
+                    <option value="60">1 min</option>
+                    <option value="120">2 min</option>
+                    <option value="180">3 min</option>
+                    <option value="300">5 min</option>
+                </select>
+            </label>
+            <label class="check"><input type="checkbox" @bind="_channel.OverlayRating" /> Signalétique jeunesse (-10, -12, -16, -18)</label>
+            <label class="check"><input type="checkbox" @bind="_channel.OverlayRatingAlways" disabled="@(!_channel.OverlayRating)" /> Signalétique pendant tout le programme (sinon : la première minute de chaque partie)</label>
+        </div>
 
         <h2>Format d'antenne</h2>
         <div class="form-grid">
