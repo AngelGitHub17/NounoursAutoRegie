@@ -130,6 +130,11 @@ public sealed class SourceDecoder : IAsyncDisposable
 
         var seek = f.Rate.TimeFromFrames(_startFrames);
         if (seek > TimeSpan.Zero) args.AddRange(["-ss", seek.TotalSeconds.ToString("0.000", ci)]);
+        if (NAR.Core.Config.ChannelConfig.IsUrl(_path))
+        {
+            // Média lu par le réseau (partage Windows relayé par la régie) : reconnexion automatique.
+            args.AddRange(["-reconnect", "1", "-reconnect_on_network_error", "1", "-reconnect_delay_max", "4"]);
+        }
         args.AddRange(["-i", _path]);
 
         // Vidéo : désentrelacement si besoin, mise à l'échelle avec bandes noires, cadence de la chaîne.

@@ -238,12 +238,43 @@ namespace NAR.Server.Data.Migrations
                     b.Property<int>("LastScanCount")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("LastScanError")
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Path")
                         .IsRequired()
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");
 
                     b.Property<bool>("Recursive")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SmbDomain")
+                        .HasMaxLength(120)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SmbHost")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SmbPasswordProtected")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SmbShare")
+                        .HasMaxLength(120)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SmbSubPath")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SmbUser")
+                        .HasMaxLength(120)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Source")
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");

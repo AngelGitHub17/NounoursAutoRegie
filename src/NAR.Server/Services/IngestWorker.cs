@@ -13,6 +13,7 @@ public sealed class IngestWorker(
     IDbContextFactory<NarDbContext> dbFactory,
     MediaLibrary library,
     FfmpegTools ffmpeg,
+    Network.SmbSources smb,
     IOptions<NarOptions> options,
     ILogger<IngestWorker> logger) : BackgroundService
 {
@@ -63,7 +64,7 @@ public sealed class IngestWorker(
         await db.SaveChangesAsync(ct);
         library.NotifyChanged();
 
-        if (!File.Exists(asset.Path))
+        if (!Network.SmbSources.IsSmb(asset.Path) && !File.Exists(asset.Path))
         {
             asset.Status = AssetStatus.Absent;
             asset.Error = "Fichier introuvable";
@@ -73,7 +74,8 @@ public sealed class IngestWorker(
         }
 
         var started = DateTimeOffset.UtcNow;
-        var probe = await ffmpeg.ProbeAsync(asset.Path, ct);
+        var source = smb.Playable(asset);
+        var probe = await ffmpeg.ProbeAsync(source, ct);
         if (!probe.Ok)
         {
             asset.Status = AssetStatus.Erreur;
@@ -93,9 +95,9 @@ public sealed class IngestWorker(
         asset.AudioCodec = probe.AudioCodec;
         asset.HasAudio = probe.HasAudio;
 
-        asset.LoudnessLufs = probe.HasAudio ? await ffmpeg.MeasureLoudnessAsync(asset.Path, ct) : null;
+        asset.LoudnessLufs = probe.HasAudio ? await ffmpeg.MeasureLoudnessAsync(source, ct) : null;
         asset.GainDb = FfmpegTools.GainFor(asset.LoudnessLufs);
-        asset.HasThumbnail = await ffmpeg.CreateThumbnailAsync(asset.Path, asset.Duration, library.ThumbnailPath(asset.Id), ct);
+        asset.HasThumbnail = await ffmpeg.CreateThumbnailAsync(source, asset.Duration, library.ThumbnailPath(asset.Id), ct);
 
         asset.Status = AssetStatus.Pret;
         asset.Error = null;

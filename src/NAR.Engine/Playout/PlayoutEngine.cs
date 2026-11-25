@@ -433,6 +433,19 @@ public sealed class PlayoutEngine(
 
     private async Task<ProbeResult> ProbeCachedAsync(string path, CancellationToken ct)
     {
+        if (ChannelConfig.IsUrl(path))
+        {
+            // Média distant : l'adresse change quand le fichier change (paramètre de version), on garde
+            // donc les réussites ; un échec (PC éteint…) est retenté au prochain rechargement.
+            lock (_probeCache)
+            {
+                if (_probeCache.TryGetValue(path, out var hit) && hit.Result.Ok) return hit.Result;
+            }
+            var remote = await probe.ProbeAsync(path, ct);
+            lock (_probeCache) _probeCache[path] = (0, DateTime.MinValue, remote);
+            return remote;
+        }
+
         var info = new FileInfo(path);
         if (!info.Exists) return ProbeResult.Failed($"Fichier introuvable : {path}");
         lock (_probeCache)

@@ -63,11 +63,33 @@ public class Channel
     public List<PlaylistEntry> Entries { get; set; } = new();
 }
 
+public enum FolderSource
+{
+    /// <summary>Dossier vu directement par le serveur (disque, montage).</summary>
+    Local,
+    /// <summary>Dossier partagé Windows (SMB), lu par le réseau sans montage.</summary>
+    Smb,
+}
+
 /// <summary>Dossier surveillé par la médiathèque.</summary>
 public class MediaFolder
 {
     public int Id { get; set; }
+
+    /// <summary>Chemin local, ou smb://hôte/partage/sous-dossier pour un partage réseau.</summary>
     [MaxLength(500)] public string Path { get; set; } = "";
+
+    public FolderSource Source { get; set; } = FolderSource.Local;
+    [MaxLength(255)] public string? SmbHost { get; set; }
+    [MaxLength(120)] public string? SmbShare { get; set; }
+    [MaxLength(500)] public string? SmbSubPath { get; set; }
+    [MaxLength(120)] public string? SmbUser { get; set; }
+    [MaxLength(120)] public string? SmbDomain { get; set; }
+
+    /// <summary>Mot de passe chiffré (Data Protection), jamais en clair dans la base.</summary>
+    [MaxLength(2000)] public string? SmbPasswordProtected { get; set; }
+
+    [MaxLength(300)] public string? LastScanError { get; set; }
     public bool Recursive { get; set; } = true;
     public bool Enabled { get; set; } = true;
     public AssetKind DefaultKind { get; set; } = AssetKind.Programme;

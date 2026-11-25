@@ -14,7 +14,7 @@ public sealed class MediaProbe(string ffprobePath, ILogger<MediaProbe> logger)
 {
     public async Task<ProbeResult> ProbeAsync(string path, CancellationToken ct)
     {
-        if (!File.Exists(path))
+        if (!NAR.Core.Config.ChannelConfig.IsUrl(path) && !File.Exists(path))
             return ProbeResult.Failed($"Fichier introuvable : {path}");
 
         var psi = new ProcessStartInfo(ffprobePath)

@@ -38,7 +38,11 @@ public sealed class ChannelConfig
     public string BaseDirectory { get; set; } = Directory.GetCurrentDirectory();
 
     public string Resolve(string path) =>
-        Path.IsPathRooted(path) ? path : Path.GetFullPath(Path.Combine(BaseDirectory, path));
+        IsUrl(path) || Path.IsPathRooted(path) ? path : Path.GetFullPath(Path.Combine(BaseDirectory, path));
+
+    /// <summary>Média distant (relais HTTP d'un partage Windows, flux…) plutôt qu'un fichier local.</summary>
+    public static bool IsUrl(string path) =>
+        path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || path.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
 
     public static readonly JsonSerializerOptions JsonOptions = new()
     {

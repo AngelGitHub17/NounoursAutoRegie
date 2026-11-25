@@ -14,7 +14,7 @@ namespace NAR.Server.Services;
 /// La révision est une empreinte du contenu : elle change dès que quoi que ce soit change
 /// (conducteur, gain d'un média réanalysé…), et le moteur recharge alors à chaud.
 /// </summary>
-public sealed class EngineConfigBuilder(IDbContextFactory<NarDbContext> dbFactory, IOptions<NarOptions> options)
+public sealed class EngineConfigBuilder(IDbContextFactory<NarDbContext> dbFactory, IOptions<NarOptions> options, Network.SmbSources smb)
 {
     public async Task<ChannelConfig?> BuildAsync(int channelId, CancellationToken ct = default)
     {
@@ -47,7 +47,7 @@ public sealed class EngineConfigBuilder(IDbContextFactory<NarDbContext> dbFactor
             FfmpegPath = o.FfmpegPath,
             FfprobePath = o.FfprobePath,
             PreloadSeconds = channel.PreloadSeconds,
-            Filler = channel.FillerAsset is { Status: AssetStatus.Pret } filler ? filler.Path : null,
+            Filler = channel.FillerAsset is { Status: AssetStatus.Pret } filler ? smb.Playable(filler) : null,
             AsRunDirectory = Path.Combine(dir, "asrun"),
             Playlist = new PlaylistConfig
             {
@@ -59,7 +59,7 @@ public sealed class EngineConfigBuilder(IDbContextFactory<NarDbContext> dbFactor
                     {
                         Id = e.Key,
                         Title = e.DisplayTitle,
-                        Path = e.Asset!.Path,
+                        Path = smb.Playable(e.Asset!),
                         In = e.InPoint is { } i && i > TimeSpan.Zero ? i.ToString("c", CultureInfo.InvariantCulture) : null,
                         Out = e.OutPoint is { } x && x > TimeSpan.Zero ? x.ToString("c", CultureInfo.InvariantCulture) : null,
                         StartAt = e.StartMode == StartMode.HeureFixe && e.FixedStart is { } at ? at.ToString("O", CultureInfo.InvariantCulture) : null,

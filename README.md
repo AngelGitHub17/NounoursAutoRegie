@@ -3,7 +3,7 @@
 **Régie finale de télévision pour NounoursCorp** : programmation, habillage, publicité, direct et diffusion multi-chaînes 24 h/24, sans écran noir.
 Remplaçant de NounoursTelevisionAutomatic, conçu comme un vrai logiciel d'automation broadcast plutôt que comme un générateur de chaînes IPTV.
 
-> **État : phase 1 — régie web, médiathèque et conducteurs en base (v0.2).**
+> **État : phase 1 — régie web, médiathèque (dont partages Windows) et conducteurs en base (v0.3).**
 > Le cahier des charges complet et la feuille de route sont dans le document de conception du projet.
 
 ## Ce que fait NounoursAutoRegie aujourd'hui
@@ -11,7 +11,7 @@ Remplaçant de NounoursTelevisionAutomatic, conçu comme un vrai logiciel d'auto
 **La régie (NAR.Server)** — interface web en français, sur PC comme sur téléphone :
 - **Antenne** : mosaïque de toutes les chaînes en direct (lecteur, élément en cours, temps restant, à suivre, santé), allumer / éteindre / redémarrer, journal du moteur.
 - **Conducteurs** : ajouter, insérer, réordonner, retirer des éléments ; horaire fixe (coupe ce qui passe) ou enchaîné ; points d'entrée et de sortie. Heures prévues calculées en direct, alertes de coupure et de bouche-trou. **Chaque modification part à l'antenne en ~2 s, sans coupure.**
-- **Médiathèque** : dossiers surveillés (rescan automatique), analyse de chaque média une fois pour toutes (durée, format, volume EBU R128 → correction vers −23 LUFS, vignette), type deviné d'après le nom (jingle, spot, bande-annonce, épisode…).
+- **Médiathèque** : dossiers locaux ou **partages Windows trouvés automatiquement sur le réseau** (rescan automatique), analyse de chaque média une fois pour toutes (durée, format, volume EBU R128 → correction vers −23 LUFS, vignette), type deviné d'après le nom (jingle, spot, bande-annonce, épisode…).
 - **Chaînes** : format (720p, 1080p25/50, 4K), encodeur (processeur ou NVENC / Quick Sync / VA-API / AMF), débit, bouche-trou, boucle.
 - **Comptes locaux** (mot de passe haché PBKDF2), création du compte administrateur à la première visite.
 - **Flux publics** sans connexion : `/live/<id>/index.m3u8` (HLS de chaque chaîne) et `/live/chaines.m3u` (liste IPTV pour NounoursTV, Jellyfin…).
@@ -46,7 +46,9 @@ Le conteneur (Ubuntu 24.04, 4 cœurs, 4 Go, 20 Go par défaut) installe la derni
 | Journaux | `journalctl -u nounoursautoregie -f` (et bouton « Journal » de chaque chaîne) |
 | Mise à jour | relancer la commande ci-dessus **dans la console du conteneur** (ou taper `update`) |
 
-**Vos vrais médias** : montez un dossier de l'hôte dans le conteneur, puis ajoutez-le dans la médiathèque.
+**Vos vrais médias** :
+- **Sur un PC Windows** : partagez le dossier (clic droit → Propriétés → Partage → Partage avancé), puis dans la régie, Médiathèque → « Rechercher les PC du réseau », choisissez le PC, entrez le compte Windows et le partage. La régie lit les fichiers par le réseau (SMB 2/3), sans rien monter sur le Proxmox. Le mot de passe est chiffré dans la base.
+- **Sur le Proxmox** : montez le dossier dans le conteneur, puis ajoutez son chemin dans la médiathèque.
 
 ```bash
 pct set <id> -mp0 /chemin/sur/l-hote,mp=/media     # puis redémarrer le conteneur

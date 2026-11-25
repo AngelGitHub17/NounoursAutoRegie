@@ -60,6 +60,8 @@ builder.Services.AddHttpClient("live", c => c.Timeout = TimeSpan.FromSeconds(15)
 
 builder.Services.AddSingleton<EngineKey>();
 builder.Services.AddSingleton<FfmpegTools>();
+builder.Services.AddSingleton<NAR.Server.Services.Network.SmbSources>();
+builder.Services.AddSingleton<NAR.Server.Services.Network.NetworkScanner>();
 builder.Services.AddSingleton<MediaLibrary>();
 builder.Services.AddSingleton<EngineConfigBuilder>();
 builder.Services.AddSingleton<Accounts>();
@@ -90,7 +92,7 @@ app.Use(async (context, next) =>
     var path = context.Request.Path;
     var free = path.StartsWithSegments("/installation") || path.StartsWithSegments("/_framework")
                || path.StartsWithSegments("/_blazor") || path.StartsWithSegments("/api/engine")
-               || path.StartsWithSegments("/live") || path.StartsWithSegments("/css") || path.StartsWithSegments("/js")
+               || path.StartsWithSegments("/live") || path.StartsWithSegments("/interne") || path.StartsWithSegments("/css") || path.StartsWithSegments("/js")
                || Path.HasExtension(path.Value);
     if (!free && !await context.RequestServices.GetRequiredService<Accounts>().HasUsersAsync())
     {
@@ -108,6 +110,7 @@ app.UseAntiforgery();
 app.MapEngineApi();
 app.MapLive();
 app.MapMediaFiles();
+app.MapSmbRelay();
 app.MapAccountEndpoints();
 
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode();

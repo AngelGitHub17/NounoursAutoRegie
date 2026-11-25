@@ -3,6 +3,9 @@
 @implements IDisposable
 @inject IDbContextFactory<NarDbContext> DbFactory
 @inject MediaLibrary Library
+@inject NAR.Server.Services.Network.NetworkScanner Scanner
+@inject NAR.Server.Services.Network.SmbSources Smb
+@using NAR.Server.Services.Network
 
 <PageTitle>Médiathèque — NounoursAutoRegie</PageTitle>
 
@@ -25,7 +28,11 @@
                 @foreach (var f in _folders)
                 {
                     <tr>
-                        <td class="mono small">@f.Path @(f.Recursive ? "" : "(sans sous-dossiers)")</td>
+                        <td>
+                            @if (f.Source == FolderSource.Smb) { <span class="badge info" style="margin-right:6px">Partage Windows</span> }
+                            <span class="mono small">@f.Path @(f.Recursive ? "" : "(sans sous-dossiers)")</span>
+                            @if (f.LastScanError is not null) { <div class="small" style="color:var(--live)">@f.LastScanError</div> }
+                        </td>
                         <td>@Fmt.Kind(f.DefaultKind)</td>
                         <td class="num">@f.LastScanCount</td>
                         <td class="small">@(f.LastScanAt is { } at ? at.ToLocalTime().ToString("dd/MM HH:mm") : "—")</td>
@@ -51,6 +58,72 @@
         <label class="check"><input type="checkbox" @bind="_newRecursive" /> Sous-dossiers</label>
         <button class="btn primary" disabled="@_busy" @onclick="AddFolderAsync">Ajouter</button>
     </div>
+</div>
+
+<h2>Partage d'un PC Windows</h2>
+<div class="panel">
+    <p class="muted" style="margin-top:0">La régie lit directement le dossier partagé du PC par le réseau : rien à monter sur le Proxmox.
+        Sur le PC : clic droit sur le dossier → Propriétés → Partage → Partage avancé → « Partager ce dossier ».</p>
+
+    <div class="row" style="margin-bottom:12px">
+        <button class="btn" disabled="@_scanning" @onclick="ScanNetworkAsync">@(_scanning ? "Recherche en cours…" : "Rechercher les PC du réseau")</button>
+        <span class="muted">ou</span>
+        <input placeholder="Adresse IP ou nom du PC" @bind="_smbHost" @bind:event="oninput" style="width:220px" />
+    </div>
+
+    @if (_hosts is not null)
+    {
+        @if (_hosts.Count == 0)
+        {
+            <p class="muted">Aucun PC ne partage de fichiers sur le réseau (port 445). Vérifiez que le partage est activé et que le pare-feu Windows l'autorise (réseau « privé »).</p>
+        }
+        else
+        {
+            <div class="row" style="margin-bottom:12px">
+                @foreach (var h in _hosts)
+                {
+                    <button class="btn @(_smbHost == h.Address ? "primary" : "")" @onclick="() => ChooseHost(h)">
+                        🖥 @(h.Name ?? h.Address) @if (h.Name is not null) { <span class="small" style="opacity:.7">@h.Address</span> }
+                    </button>
+                }
+            </div>
+        }
+    }
+
+    @if (!string.IsNullOrWhiteSpace(_smbHost))
+    {
+        <div class="form-grid">
+            <label class="field"><span>Identifiant Windows</span><input @bind="_smbUser" autocomplete="off" placeholder="compte local, ou adresse e-mail Microsoft" /></label>
+            <label class="field"><span>Mot de passe</span><input type="password" @bind="_smbPassword" autocomplete="new-password" /></label>
+            <div style="align-self:end"><button class="btn" disabled="@_busy" @onclick="ListSharesAsync">Afficher les partages</button></div>
+        </div>
+    }
+
+    @if (_shares is not null)
+    {
+        <div class="row" style="margin:12px 0">
+            <span class="muted">Partages :</span>
+            @foreach (var share in _shares)
+            {
+                <button class="btn sm @(_smbShare == share ? "primary" : "")" @onclick="() => _smbShare = share">📁 @share</button>
+            }
+            @if (_shares.Count == 0) { <span class="muted">aucun dossier partagé sur ce PC.</span> }
+        </div>
+    }
+
+    @if (_smbShare is not null)
+    {
+        <div class="form-grid">
+            <label class="field"><span>Sous-dossier (facultatif)</span><input @bind="_smbSubPath" placeholder="ex. Films/Animation" /></label>
+            <label class="field"><span>Type par défaut</span>
+                <select @bind="_smbKind">
+                    @foreach (var k in Enum.GetValues<AssetKind>()) { <option value="@k">@Fmt.Kind(k)</option> }
+                </select>
+            </label>
+            <label class="check" style="align-self:end"><input type="checkbox" @bind="_smbRecursive" /> Sous-dossiers</label>
+            <div style="align-self:end"><button class="btn primary" disabled="@_busy" @onclick="AddSmbFolderAsync">Ajouter à la médiathèque</button></div>
+        </div>
+    }
 </div>
 
 <h2>Médias <span class="muted" style="text-transform:none">(@_total)</span></h2>
@@ -159,6 +232,13 @@
     private bool _newRecursive = true, _busy, _messageOk;
     private string? _message;
     private int? _editing;
+    private bool _scanning;
+    private List<NetworkHost>? _hosts;
+    private List<string>? _shares;
+    private string _smbHost = "", _smbUser = "", _smbPassword = "", _smbSubPath = "";
+    private string? _smbShare;
+    private AssetKind _smbKind = AssetKind.Programme;
+    private bool _smbRecursive = true;
     private DateTime _lastRefresh;
 
     private string Search { get; set; } = "";
@@ -279,6 +359,115 @@
             await db.SaveChangesAsync();
         }
         _editing = null;
+    }
+
+    private async Task ScanNetworkAsync()
+    {
+        _scanning = true;
+        _message = null;
+        StateHasChanged();
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            _hosts = await Scanner.ScanAsync(cts.Token);
+        }
+        catch (Exception ex)
+        {
+            (_message, _messageOk) = ($"Recherche impossible : {ex.Message}", false);
+        }
+        finally
+        {
+            _scanning = false;
+        }
+    }
+
+    private void ChooseHost(NetworkHost host)
+    {
+        _smbHost = host.Address;
+        _shares = null;
+        _smbShare = null;
+    }
+
+    private async Task ListSharesAsync()
+    {
+        _message = null;
+        _shares = null;
+        _smbShare = null;
+        _busy = true;
+        try
+        {
+            var (host, user, pass) = (_smbHost.Trim(), _smbUser.Trim(), _smbPassword);
+            _shares = await Task.Run(() =>
+            {
+                using var session = SmbSession.Login(host, user, pass, null);
+                return session.ListShares();
+            });
+        }
+        catch (Exception ex) when (ex is SmbException or System.Net.Sockets.SocketException or IOException)
+        {
+            (_message, _messageOk) = (ex.Message, false);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task AddSmbFolderAsync()
+    {
+        if (_smbShare is null) return;
+        _message = null;
+        _busy = true;
+        try
+        {
+            var sub = _smbSubPath.Replace('\\', '/').Trim('/');
+            var target = new SmbTarget(_smbHost.Trim(), _smbShare, _smbUser.Trim(), _smbPassword);
+            // Vérifie l'accès au dossier avant de l'enregistrer.
+            await Task.Run(() =>
+            {
+                using var session = SmbSession.Open(target);
+                _ = session.EnumerateFiles(sub, recursive: false, _ => false).Any();
+            });
+
+            var path = SmbSources.FolderPath(target.Host, target.Share, sub);
+            int folderId;
+            await using (var db = await DbFactory.CreateDbContextAsync())
+            {
+                if (await db.MediaFolders.AnyAsync(f => f.Path == path))
+                {
+                    (_message, _messageOk) = ("Ce dossier partagé est déjà dans la médiathèque.", false);
+                    return;
+                }
+                var folder = new MediaFolder
+                {
+                    Path = path,
+                    Source = FolderSource.Smb,
+                    SmbHost = target.Host,
+                    SmbShare = target.Share,
+                    SmbSubPath = sub.Length == 0 ? null : sub,
+                    SmbUser = target.User,
+                    SmbPasswordProtected = Smb.Protect(target.Password),
+                    DefaultKind = _smbKind,
+                    Recursive = _smbRecursive,
+                };
+                db.MediaFolders.Add(folder);
+                await db.SaveChangesAsync();
+                folderId = folder.Id;
+            }
+            _smbPassword = "";
+            _shares = null;
+            _smbShare = null;
+            _busy = false;
+            await ScanAsync(folderId);
+        }
+        catch (Exception ex) when (ex is SmbException or System.Net.Sockets.SocketException or IOException)
+        {
+            (_message, _messageOk) = (ex.Message, false);
+        }
+        finally
+        {
+            _busy = false;
+        }
     }
 
     public void Dispose() => Library.Changed -= OnLibraryChanged;

@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using NAR.Server.Data;
+using NAR.Server.Services.Network;
 
 namespace NAR.Server.Services;
 
@@ -11,6 +12,7 @@ namespace NAR.Server.Services;
 /// </summary>
 public sealed partial class MediaLibrary(
     IDbContextFactory<NarDbContext> dbFactory,
+    SmbSources smb,
     IOptions<NarOptions> options,
     ILogger<MediaLibrary> logger)
 {
@@ -36,17 +38,26 @@ public sealed partial class MediaLibrary(
         {
             await using var db = await dbFactory.CreateDbContextAsync(ct);
             var folder = await db.MediaFolders.FindAsync([folderId], ct) ?? throw new InvalidOperationException("Dossier inconnu");
-            if (!Directory.Exists(folder.Path))
-            {
-                logger.LogWarning("Dossier de médiathèque introuvable : {Path}", folder.Path);
-                return (0, 0, 0);
-            }
 
-            var files = Directory.EnumerateFiles(folder.Path, "*",
-                    new EnumerationOptions { RecurseSubdirectories = folder.Recursive, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.Hidden | FileAttributes.System })
-                .Where(f => VideoExtensions.Contains(Path.GetExtension(f)))
-                .Select(f => new FileInfo(f))
-                .ToList();
+            // Liste des fichiers vidéo : disque local, ou partage Windows lu par le réseau.
+            List<(string Path, string Name, long Size, DateTime WriteUtc)> files;
+            try
+            {
+                files = folder.Source == FolderSource.Smb
+                    ? await Task.Run(() => ListSmb(folder), ct)
+                    : ListLocal(folder);
+                folder.LastScanError = null;
+            }
+            catch (Exception ex) when (ex is SmbException or IOException or UnauthorizedAccessException or System.Net.Sockets.SocketException)
+            {
+                // Dossier injoignable (PC éteint…) : on ne déclare surtout pas tous ses médias absents.
+                folder.LastScanError = ex.Message.Length > 300 ? ex.Message[..300] : ex.Message;
+                folder.LastScanAt = DateTimeOffset.UtcNow;
+                await db.SaveChangesAsync(ct);
+                logger.LogWarning("Médiathèque {Path} injoignable : {Error}", folder.Path, ex.Message);
+                Changed?.Invoke();
+                throw new IOException(folder.LastScanError, ex);
+            }
 
             var known = await db.MediaAssets.Where(a => a.FolderId == folder.Id).ToDictionaryAsync(a => a.Path, ct);
             int added = 0, updated = 0, missing = 0;
@@ -54,13 +65,13 @@ public sealed partial class MediaLibrary(
 
             foreach (var file in files)
             {
-                seen.Add(file.FullName);
-                if (known.TryGetValue(file.FullName, out var asset))
+                seen.Add(file.Path);
+                if (known.TryGetValue(file.Path, out var asset))
                 {
-                    if (asset.FileSize != file.Length || asset.FileModifiedUtc != file.LastWriteTimeUtc || asset.Status == AssetStatus.Absent)
+                    if (asset.FileSize != file.Size || asset.FileModifiedUtc != file.WriteUtc || asset.Status == AssetStatus.Absent)
                     {
-                        asset.FileSize = file.Length;
-                        asset.FileModifiedUtc = file.LastWriteTimeUtc;
+                        asset.FileSize = file.Size;
+                        asset.FileModifiedUtc = file.WriteUtc;
                         asset.Status = AssetStatus.EnAttente;
                         updated++;
                     }
@@ -68,17 +79,17 @@ public sealed partial class MediaLibrary(
                 }
 
                 // Un fichier déjà connu via un autre dossier n'est pas dupliqué.
-                if (await db.MediaAssets.AnyAsync(a => a.Path == file.FullName, ct)) continue;
+                if (await db.MediaAssets.AnyAsync(a => a.Path == file.Path, ct)) continue;
 
                 db.MediaAssets.Add(new MediaAsset
                 {
                     FolderId = folder.Id,
-                    Path = file.FullName,
+                    Path = file.Path,
                     FileName = file.Name,
                     Title = TitleFromFileName(file.Name),
                     Kind = GuessKind(file.Name, folder.DefaultKind),
-                    FileSize = file.Length,
-                    FileModifiedUtc = file.LastWriteTimeUtc,
+                    FileSize = file.Size,
+                    FileModifiedUtc = file.WriteUtc,
                 });
                 added++;
             }
@@ -106,6 +117,27 @@ public sealed partial class MediaLibrary(
         }
     }
 
+    private static List<(string, string, long, DateTime)> ListLocal(MediaFolder folder)
+    {
+        if (!Directory.Exists(folder.Path)) throw new IOException($"Dossier introuvable : {folder.Path}");
+        return Directory.EnumerateFiles(folder.Path, "*",
+                new EnumerationOptions { RecurseSubdirectories = folder.Recursive, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.Hidden | FileAttributes.System })
+            .Where(f => VideoExtensions.Contains(Path.GetExtension(f)))
+            .Select(f => new FileInfo(f))
+            .Select(f => (f.FullName, f.Name, f.Length, f.LastWriteTimeUtc))
+            .ToList();
+    }
+
+    private List<(string, string, long, DateTime)> ListSmb(MediaFolder folder)
+    {
+        var target = smb.TargetOf(folder);
+        using var session = SmbSession.Open(target);
+        var root = SmbSources.FolderPath(target.Host, target.Share, null);
+        return session.EnumerateFiles(folder.SmbSubPath ?? "", folder.Recursive, name => VideoExtensions.Contains(Path.GetExtension(name)))
+            .Select(e => ($"{root}/{e.RelativePath}", e.Name, e.Size, e.LastWriteUtc))
+            .ToList();
+    }
+
     public async Task ScanAllAsync(CancellationToken ct = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
@@ -113,6 +145,7 @@ public sealed partial class MediaLibrary(
         foreach (var id in ids)
         {
             try { await ScanFolderAsync(id, ct); }
+            catch (IOException) { /* déjà journalisé : dossier injoignable */ }
             catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogError(ex, "Parcours du dossier {Id} impossible", id); }
         }
     }
