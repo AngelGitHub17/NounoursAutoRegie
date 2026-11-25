@@ -61,19 +61,26 @@
                     <label class="check" style="align-self:end"><input type="checkbox" @bind="_logoOnBlack" /> Logo sur fond noir</label>
                 </div>
 
-                @if (_kind == AtelierKind.BandeAnnonce)
+                @if (_kind != AtelierKind.Ident)
                 {
                     <div class="form-grid" style="margin-top:14px">
-                        <label class="field"><span>Programme à annoncer</span>
+                        <label class="field"><span>@(_kind == AtelierKind.BandeAnnonce ? "Programme à annoncer" : "Programme lié (facultatif)")</span>
                             <input placeholder="Rechercher un film, un épisode…" @bind="SourceSearch" @bind:event="oninput" @bind:after="LoadSourcesAsync" />
                             <select @bind="_sourceId" size="5" style="margin-top:6px">
                                 @foreach (var a in _sources) { <option value="@a.Id">@a.Title (@Fmt.Duration(a.Duration))</option> }
                             </select>
                         </label>
+                        @if (_kind != AtelierKind.BandeAnnonce)
+                        {
+                            <span class="small muted" style="align-self:end">Lier un programme (ou lui donner le même titre) permet aux programmes types de reprendre ce @(_kind == AtelierKind.Jingle ? "jingle" : "générique") tout seul devant lui.</span>
+                        }
+                        else
+                        {
                         <label class="field"><span>Extraits (facultatif)</span>
                             <input @bind="_extracts" placeholder="ex. 2:10, 15:30, 41:05" />
                             <span class="small muted" style="text-transform:none;letter-spacing:0">Vide : l'atelier choisit 10 moments répartis dans le programme. Les coupes tombent sur les temps forts.</span>
                         </label>
+                        }
                     </div>
                 }
                 <div class="row" style="margin-top:16px">
@@ -262,7 +269,7 @@
             ChannelId = _channelId,
             LogoOnBlack = _logoOnBlack,
             DurationSeconds = _duration,
-            SourceAssetId = _kind == AtelierKind.BandeAnnonce ? _sourceId : null,
+            SourceAssetId = _kind != AtelierKind.Ident ? _sourceId : null,
             ExtractStarts = _kind == AtelierKind.BandeAnnonce ? _extracts : null,
         });
         (_message, _ok) = ("C'est parti : la création apparaît ci-dessous et rejoint la médiathèque dès qu'elle est prête.", true);

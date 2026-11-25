@@ -535,6 +535,104 @@ namespace NAR.Server.Data.Migrations
                     b.ToTable("PlaylistEntries");
                 });
 
+            modelBuilder.Entity("NAR.Server.Data.ProgrammeType", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("ProgrammeTypes");
+                });
+
+            modelBuilder.Entity("NAR.Server.Data.ProgrammeTypeBloc", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("AssetId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("AtelierKind")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Count")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("DurationSeconds")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("Kind")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Label")
+                        .HasMaxLength(60)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ProgrammeTypeId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SeriesName")
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AssetId");
+
+                    b.HasIndex("ProgrammeTypeId");
+
+                    b.ToTable("ProgrammeTypeBlocs");
+                });
+
+            modelBuilder.Entity("NAR.Server.Data.SeriesProgress", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ChannelId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("LastAssetId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SeriesName")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChannelId", "SeriesName")
+                        .IsUnique();
+
+                    b.ToTable("SeriesProgress");
+                });
+
             modelBuilder.Entity("NAR.Server.Data.AtelierCreation", b =>
                 {
                     b.HasOne("NAR.Server.Data.AtelierSound", "Sound")
@@ -584,9 +682,32 @@ namespace NAR.Server.Data.Migrations
                     b.Navigation("Channel");
                 });
 
+            modelBuilder.Entity("NAR.Server.Data.ProgrammeTypeBloc", b =>
+                {
+                    b.HasOne("NAR.Server.Data.MediaAsset", "Asset")
+                        .WithMany()
+                        .HasForeignKey("AssetId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("NAR.Server.Data.ProgrammeType", "ProgrammeType")
+                        .WithMany("Blocs")
+                        .HasForeignKey("ProgrammeTypeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Asset");
+
+                    b.Navigation("ProgrammeType");
+                });
+
             modelBuilder.Entity("NAR.Server.Data.Channel", b =>
                 {
                     b.Navigation("Entries");
+                });
+
+            modelBuilder.Entity("NAR.Server.Data.ProgrammeType", b =>
+                {
+                    b.Navigation("Blocs");
                 });
 #pragma warning restore 612, 618
         }

@@ -5,6 +5,7 @@
 @inject IDbContextFactory<NarDbContext> DbFactory
 @inject EngineMonitor Monitor
 @inject NavigationManager Nav
+@inject ProgrammeTypes Types
 @using NAR.Core.Scheduling
 
 <PageTitle>Conducteur @_channel?.Name — NounoursAutoRegie</PageTitle>
@@ -165,6 +166,63 @@ else if (_channel is not null)
         }
         else
         {
+        <div class="panel" style="margin-bottom:16px">
+            <h2 style="margin-top:0">Programme type</h2>
+            <select style="width:100%" value="@_ptId" @onchange="SelectTypeAsync">
+                <option value="0">— choisir un modèle —</option>
+                @foreach (var t in _ptTypes) { <option value="@t.Id">@t.Name</option> }
+            </select>
+            @if (_ptType is not null)
+            {
+                @foreach (var b in _ptType.Blocs.OrderBy(b => b.Position).Where(b => b.Type == BlocType.AuChoix || (b.Type == BlocType.EpisodeSuivant && string.IsNullOrWhiteSpace(b.SeriesName))))
+                {
+                    var bloc = b;
+                    <label class="field" style="margin-top:8px"><span>@(string.IsNullOrWhiteSpace(bloc.Label) ? ProgrammeTypes.TypeLabel(bloc.Type) : bloc.Label)</span>
+                        @if (bloc.Type == BlocType.AuChoix)
+                        {
+                            <select value="@(_ptChoices.TryGetValue(bloc.Id, out var chosen) ? chosen : 0)" @onchange="e => ChooseAsync(bloc.Id, e)">
+                                <option value="0">— choisir —</option>
+                                @foreach (var a in _ptOptions.GetValueOrDefault(bloc.Id) ?? new()) { <option value="@a.Id">@a.Title (@Fmt.Duration(a.Duration))</option> }
+                            </select>
+                        }
+                        else
+                        {
+                            <select value="@(_ptSeries.GetValueOrDefault(bloc.Id) ?? "")" @onchange="e => ChooseSeriesAsync(bloc.Id, e)">
+                                <option value="">— choisir la série —</option>
+                                @foreach (var s in _ptSeriesList) { <option value="@s">@s</option> }
+                            </select>
+                        }
+                    </label>
+                }
+                <label class="field" style="margin-top:8px"><span>Heure fixe (facultatif)</span>
+                    <input type="datetime-local" @bind="_ptFixed" />
+                </label>
+                @if (_ptPreview is { } pv)
+                {
+                    <div class="small" style="margin-top:10px">
+                        @foreach (var it in pv.Items)
+                        {
+                            <div class="row" style="flex-wrap:nowrap;gap:6px;padding:2px 0;border-bottom:1px solid var(--line)">
+                                <span class="muted" style="min-width:64px">@it.Bloc</span>
+                                <span class="grow" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="@it.Title">@it.Title</span>
+                                <span class="mono muted">@Fmt.Duration(it.Duration)</span>
+                            </div>
+                        }
+                        <div style="margin-top:4px">@pv.Items.Count élément(s) · <b class="mono">@Fmt.Timecode(pv.Duration)</b></div>
+                        @foreach (var w in pv.Warnings) { <div style="color:var(--warn);margin-top:4px">@w</div> }
+                    </div>
+                    <div class="row" style="margin-top:10px">
+                        <button class="btn primary" disabled="@(pv.Items.Count == 0)" @onclick="InsertTypeAsync">Insérer@(_selected is not null ? " après la sélection" : " à la fin")</button>
+                        <button class="btn" @onclick="PreviewAsync" title="Nouveau tirage des pubs et médias au hasard">Autre tirage</button>
+                    </div>
+                }
+            }
+            else if (_ptTypes.Count == 0)
+            {
+                <p class="small muted">Aucun modèle : créez-en dans <a href="/programmes-types">Programmes types</a>.</p>
+            }
+        </div>
+
         <div class="panel">
             <h2 style="margin-top:0">Ajouter</h2>
             <div class="row" style="margin-bottom:8px">
@@ -246,6 +304,7 @@ else if (_channel is not null)
         if (AuthState is not null) _user = (await AuthState).User;
         Monitor.Updated += OnMonitor;
         await LoadPickerAsync();
+        await LoadTypesAsync();
     }
 
     protected override async Task OnParametersSetAsync()
@@ -327,6 +386,80 @@ else if (_channel is not null)
         }
         if (Enum.TryParse<AssetKind>(PickerKind, out var kind)) q = q.Where(a => a.Kind == kind);
         _picker = await q.OrderBy(a => a.Title).Take(150).ToListAsync();
+    }
+
+    // --- Programmes types -------------------------------------------------------------------
+    private List<ProgrammeType> _ptTypes = new();
+    private ProgrammeType? _ptType;
+    private int _ptId;
+    private readonly Dictionary<int, int> _ptChoices = new();
+    private readonly Dictionary<int, string> _ptSeries = new();
+    private readonly Dictionary<int, List<MediaAsset>> _ptOptions = new();
+    private List<string> _ptSeriesList = new();
+    private DateTime? _ptFixed;
+    private Expansion? _ptPreview;
+
+    private async Task LoadTypesAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _ptTypes = await db.ProgrammeTypes.AsNoTracking().Include(t => t.Blocs).OrderBy(t => t.Name).ToListAsync();
+    }
+
+    private async Task SelectTypeAsync(ChangeEventArgs e)
+    {
+        _ptId = int.TryParse(e.Value?.ToString(), out var id) ? id : 0;
+        _ptType = _ptTypes.FirstOrDefault(t => t.Id == _ptId);
+        _ptChoices.Clear();
+        _ptSeries.Clear();
+        _ptOptions.Clear();
+        _ptPreview = null;
+        if (_ptType is null) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        foreach (var b in _ptType.Blocs.Where(b => b.Type == BlocType.AuChoix))
+            _ptOptions[b.Id] = await db.MediaAssets.AsNoTracking()
+                .Where(a => a.Status == AssetStatus.Pret && (b.Kind == null || a.Kind == b.Kind))
+                .OrderBy(a => a.Title).Take(1000).ToListAsync();
+        if (_ptType.Blocs.Any(b => b.Type == BlocType.EpisodeSuivant)) _ptSeriesList = await Types.SeriesAsync();
+        await PreviewAsync();
+    }
+
+    private async Task ChooseAsync(int blocId, ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var id) && id > 0) _ptChoices[blocId] = id; else _ptChoices.Remove(blocId);
+        await PreviewAsync();
+    }
+
+    private async Task ChooseSeriesAsync(int blocId, ChangeEventArgs e)
+    {
+        var name = e.Value?.ToString();
+        if (string.IsNullOrWhiteSpace(name)) _ptSeries.Remove(blocId); else _ptSeries[blocId] = name;
+        await PreviewAsync();
+    }
+
+    private async Task PreviewAsync()
+    {
+        if (_channel is null || _ptType is null) return;
+        try { _ptPreview = await Types.ExpandAsync(_channel.Id, _ptType.Id, _ptChoices, _ptSeries); }
+        catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException or DbUpdateException)
+        {
+            _ptPreview = null;
+            (_message, _messageOk) = ($"Programme type : {ex.Message}", false);
+        }
+    }
+
+    private async Task InsertTypeAsync()
+    {
+        if (!CanEdit || _channel is null || _ptPreview is null || _ptPreview.Items.Count == 0) return;
+        // On insère exactement ce que montre l'aperçu (même tirage des pubs et des médias au hasard).
+        var insertAt = _selected is { } sel ? _entries.FindIndex(x => x.Id == sel) + 1 : _entries.Count;
+        if (insertAt <= 0) insertAt = _entries.Count;
+        DateTimeOffset? fixedStart = _ptFixed is { } f ? new DateTimeOffset(f, TimeZoneInfo.Local.GetUtcOffset(f)) : null;
+        var first = await Types.InsertAsync(_channel.Id, _ptPreview, insertAt, fixedStart);
+        var label = $"« {_ptPreview.TypeName} » inséré ({_ptPreview.Items.Count} éléments).";
+        _selected = first is null ? _selected : first + _ptPreview.Items.Count - 1;
+        _ptFixed = null;
+        await AfterChangeAsync(label);
+        await PreviewAsync(); // prochain tirage / épisode suivant prêt pour une nouvelle insertion
     }
 
     private void ChangeChannel(ChangeEventArgs e) => Nav.NavigateTo($"/conducteur/{e.Value}");

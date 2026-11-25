@@ -12,6 +12,9 @@ public class NarDbContext(DbContextOptions<NarDbContext> options) : DbContext(op
     public DbSet<AppUser> Users => Set<AppUser>();
     public DbSet<AtelierSound> AtelierSounds => Set<AtelierSound>();
     public DbSet<AtelierCreation> AtelierCreations => Set<AtelierCreation>();
+    public DbSet<ProgrammeType> ProgrammeTypes => Set<ProgrammeType>();
+    public DbSet<ProgrammeTypeBloc> ProgrammeTypeBlocs => Set<ProgrammeTypeBloc>();
+    public DbSet<SeriesProgress> SeriesProgress => Set<SeriesProgress>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -38,6 +41,9 @@ public class NarDbContext(DbContextOptions<NarDbContext> options) : DbContext(op
         });
         b.Entity<AppUser>(e => e.HasIndex(x => x.UserName).IsUnique());
         b.Entity<AtelierCreation>(e => e.HasOne(x => x.Sound).WithMany().HasForeignKey(x => x.SoundId).OnDelete(DeleteBehavior.SetNull));
+        b.Entity<ProgrammeType>(e => e.HasMany(x => x.Blocs).WithOne(x => x.ProgrammeType!).HasForeignKey(x => x.ProgrammeTypeId).OnDelete(DeleteBehavior.Cascade));
+        b.Entity<ProgrammeTypeBloc>(e => e.HasOne(x => x.Asset).WithMany().HasForeignKey(x => x.AssetId).OnDelete(DeleteBehavior.SetNull));
+        b.Entity<SeriesProgress>(e => e.HasIndex(x => new { x.ChannelId, x.SeriesName }).IsUnique());
     }
 }
 

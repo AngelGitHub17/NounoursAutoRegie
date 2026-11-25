@@ -243,52 +243,92 @@ if ($cache && mt_rand(1, 20) === 1) {
     foreach (glob($cache . '/*') ?: [] as $f) { if (@filemtime($f) < time() - 120) @unlink($f); }
 }
 
+// Un spectateur qui s'en va (zapping, nouvel essai du lecteur) n'interrompt pas la récupération :
+// le segment finit d'arriver et reste en cache pour les autres.
+ignore_user_abort(true);
+
+/**
+ * Récupère un segment de la régie dans le cache, en l'envoyant au passage à $sink (spectateur).
+ * Un seul récupérateur à la fois par segment (fichier .part créé en exclusif) ; nouvel essai si
+ * la régie n'a encore rien envoyé.
+ */
+function nar_cache_fetch(string $url, ?string $file, ?callable $sink, array &$r): bool {
+    for ($attempt = 1; $attempt <= 2; $attempt++) {
+        $fp = $file ? @fopen($file . '.part', 'x') : false;
+        if ($file && !$fp && !$sink) return false; // préchargement déjà en cours ailleurs
+        $sent = 0;
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_CONNECTTIMEOUT => 5, CURLOPT_TIMEOUT => 25,
+            CURLOPT_WRITEFUNCTION => function ($ch, $data) use (&$fp, &$sent, $sink) {
+                if (curl_getinfo($ch, CURLINFO_HTTP_CODE) != 200) return 0;
+                if ($fp) fwrite($fp, $data);
+                if ($sink) $sink($ch, $data, $sent === 0);
+                $sent += strlen($data);
+                return strlen($data);
+            },
+        ]);
+        $done = curl_exec($ch);
+        $r = ['err' => curl_error($ch), 'code' => curl_getinfo($ch, CURLINFO_HTTP_CODE), 'body' => ''];
+        curl_close($ch);
+        if ($fp) {
+            fclose($fp);
+            if ($done && $sent > 0 && $r['code'] == 200) { @rename($file . '.part', $file); return true; }
+            @unlink($file . '.part');
+        } elseif ($done && $sent > 0 && $r['code'] == 200) {
+            return true;
+        }
+        if ($sent > 0 || $r['code'] == 404 || $r['code'] == 403) return false; // déjà commencé, ou réponse définitive
+        usleep(300000);
+    }
+    return false;
+}
+
+function nar_send_file(string $file): never {
+    header('Content-Type: video/MP2T');
+    header('Cache-Control: public, max-age=60');
+    header('Content-Length: ' . filesize($file));
+    readfile($file);
+    exit;
+}
+
 // ── Segment vidéo ────────────────────────────────────────────────
 if ($seg !== '') {
     if (!preg_match('/^seg_\d+\.ts$/', $seg)) nar_fail(400, 'segment invalide');
     $file = $cache ? $cache . '/' . $seg : null;
     if ($file) {
-        // Un autre spectateur est déjà en train de le récupérer : on l'attend (8 s au plus).
+        if (is_file($file)) nar_send_file($file);
+        // Déjà en cours de récupération : on attend tant que le fichier grossit (sinon on le reprend).
         $t0 = microtime(true);
-        while (!is_file($file) && is_file($file . '.part') && time() - (int)@filemtime($file . '.part') < 10 && microtime(true) - $t0 < 8) usleep(100000);
-        if (is_file($file)) {
-            header('Content-Type: video/MP2T');
-            header('Cache-Control: public, max-age=60');
-            header('Content-Length: ' . filesize($file));
-            readfile($file);
-            exit;
+        while (is_file($file . '.part') && microtime(true) - $t0 < 15) {
+            clearstatcache();
+            if (is_file($file)) nar_send_file($file);
+            if (time() - (int)@filemtime($file . '.part') > 3) { @unlink($file . '.part'); break; }
+            usleep(100000);
         }
+        clearstatcache();
+        if (is_file($file)) nar_send_file($file);
     }
     // Transmis au fil de l'eau : le lecteur reçoit les premiers octets sans attendre la fin du segment.
     while (ob_get_level()) ob_end_clean();
-    $fp = $file ? @fopen($file . '.part', 'wb') : false;
-    $ok = false;
-    $ch = curl_init(NAR_BASE . '/live/' . $c . '/' . $seg . $key);
-    curl_setopt_array($ch, [
-        CURLOPT_CONNECTTIMEOUT => 5, CURLOPT_TIMEOUT => 25,
-        CURLOPT_WRITEFUNCTION => function ($ch, $data) use (&$fp, &$ok) {
-            if (curl_getinfo($ch, CURLINFO_HTTP_CODE) != 200) return 0;
-            if (!$ok) {
-                $ok = true;
-                header('Content-Type: video/MP2T');
-                header('Cache-Control: public, max-age=60');
-                $size = curl_getinfo($ch, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T);
-                if ($size > 0) header('Content-Length: ' . (int)$size);
-            }
-            if ($fp) fwrite($fp, $data);
-            echo $data;
-            flush();
-            return strlen($data);
-        },
-    ]);
-    $done = curl_exec($ch);
-    $r = ['err' => curl_error($ch), 'code' => curl_getinfo($ch, CURLINFO_HTTP_CODE), 'body' => ''];
-    curl_close($ch);
-    if ($fp) {
-        fclose($fp);
-        if ($done && $ok) @rename($file . '.part', $file); else @unlink($file . '.part');
+    $started = false;
+    $sink = function ($ch, $data, $first) use (&$started) {
+        if ($first) {
+            $started = true;
+            header('Content-Type: video/MP2T');
+            header('Cache-Control: public, max-age=60');
+            $size = curl_getinfo($ch, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T);
+            if ($size > 0) header('Content-Length: ' . (int)$size);
+        }
+        if (!connection_aborted()) { echo $data; flush(); }
+    };
+    $r = [];
+    $ok = nar_cache_fetch(NAR_BASE . '/live/' . $c . '/' . $seg . $key, $file, $sink, $r);
+    if (!$ok && !$started) {
+        clearstatcache();
+        if ($file && is_file($file)) nar_send_file($file); // un autre l'a terminé entre-temps
+        nar_fail(502, 'segment indisponible : ' . nar_detail($r));
     }
-    if (!$ok) nar_fail(502, 'segment indisponible : ' . nar_detail($r));
     exit;
 }
 
@@ -303,16 +343,29 @@ if ($pl && is_file($pl) && microtime(true) - filemtime($pl) < 1.0) {
     if ($pl) { @file_put_contents($pl . '.tmp', $body); @rename($pl . '.tmp', $pl); }
 }
 $out = [];
+$names = [];
 foreach (explode("\n", trim($body)) as $line) {
     $line = rtrim($line);
     if ($line === '' || $line[0] === '#') { $out[] = $line; continue; }
     $name = basename(parse_url($line, PHP_URL_PATH) ?: '');
+    if (preg_match('/^seg_\d+\.ts$/', $name)) $names[] = $name;
     $out[] = $name !== '' ? 'nar.php?c=' . $c . '&seg=' . rawurlencode($name) . $tokenSuffix : $line;
 }
 $txt = implode("\n", $out) . "\n";
 header('Content-Type: application/vnd.apple.mpegurl');
 header('Content-Length: ' . strlen($txt));
 echo $txt;
+
+// Préchargement : la playlist est partie, on va chercher tout de suite les derniers segments
+// pour qu'ils attendent déjà sur le site quand le lecteur les demandera.
+if ($cache && function_exists('fastcgi_finish_request')) {
+    fastcgi_finish_request();
+    foreach (array_slice($names, -2) as $name) {
+        if (is_file($cache . '/' . $name) || is_file($cache . '/' . $name . '.part')) continue;
+        $r = [];
+        nar_cache_fetch(NAR_BASE . '/live/' . $c . '/' . $name . $key, $cache . '/' . $name, null, $r);
+    }
+}
 
 """;
 }

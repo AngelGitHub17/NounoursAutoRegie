@@ -1,0 +1,264 @@
+@page "/programmes-types"
+@rendermode InteractiveServer
+@inject IDbContextFactory<NarDbContext> DbFactory
+@inject ProgrammeTypes Types
+
+<PageTitle>Programmes types — NounoursAutoRegie</PageTitle>
+
+<h1>Programmes types</h1>
+<p class="lead">Des modèles réutilisables : « Film du soir » = écran pub → jingle Rétro 95 du film → film. Dans le conducteur, <b>Programme type</b> les déplie en médias, avec l'épisode suivant des séries et le jingle de l'atelier trouvés tout seuls.</p>
+
+@if (_message is not null) { <div class="alert @(_ok ? "ok" : "error")">@_message</div> }
+
+<div class="layout-2" style="grid-template-columns: 300px minmax(0, 1fr)">
+    <div class="panel">
+        <h2 style="margin-top:0">Modèles</h2>
+        @foreach (var t in _types)
+        {
+            <div class="item-card @(_edit?.Id == t.Id ? "active" : "")" @onclick="() => Select(t)" style="cursor:pointer;padding:8px;border-bottom:1px solid var(--line)">
+                <b>@t.Name</b>
+                <div class="small muted">@t.Blocs.Count bloc(s)@(string.IsNullOrWhiteSpace(t.Description) ? "" : $" · {t.Description}")</div>
+            </div>
+        }
+        @if (CanEdit)
+        {
+            <button class="btn" style="margin-top:12px" @onclick="New">+ Nouveau programme type</button>
+        }
+    </div>
+
+    <div class="panel">
+        @if (_edit is null)
+        {
+            <p class="muted">Choisissez un modèle à gauche@(CanEdit ? ", ou créez-en un" : "").</p>
+        }
+        else
+        {
+            <div class="form-grid">
+                <label class="field"><span>Nom</span><input @bind="_edit.Name" maxlength="100" disabled="@(!CanEdit)" /></label>
+                <label class="field"><span>Description</span><input @bind="_edit.Description" maxlength="500" disabled="@(!CanEdit)" /></label>
+            </div>
+
+            <h2>Blocs, dans l'ordre de diffusion</h2>
+            <div class="table-wrap">
+                <table class="grid pt-blocs">
+                    <thead><tr><th>#</th><th>Bloc</th><th>Réglages</th><th>Libellé</th><th></th></tr></thead>
+                    <tbody>
+                        @for (var i = 0; i < _edit.Blocs.Count; i++)
+                        {
+                            var index = i;
+                            var b = _edit.Blocs[i];
+                            <tr>
+                                <td class="mono">@(i + 1)</td>
+                                <td>
+                                    <select @bind="b.Type" disabled="@(!CanEdit)">
+                                        @foreach (var t in Enum.GetValues<BlocType>()) { <option value="@t">@ProgrammeTypes.TypeLabel(t)</option> }
+                                    </select>
+                                </td>
+                                <td>
+                                    @switch (b.Type)
+                                    {
+                                        case BlocType.Media:
+                                            <select @bind="b.AssetId" disabled="@(!CanEdit)">
+                                                <option value="">— choisir —</option>
+                                                @foreach (var a in _fixedAssets) { <option value="@a.Id">@Fmt.Kind(a.Kind) · @a.Title (@Fmt.Duration(a.Duration))</option> }
+                                            </select>
+                                            break;
+                                        case BlocType.AuHasard:
+                                        case BlocType.AuChoix:
+                                            <select @bind="b.Kind" disabled="@(!CanEdit)">
+                                                <option value="">Tous les types</option>
+                                                @foreach (var k in Enum.GetValues<AssetKind>()) { <option value="@k">@Fmt.Kind(k)</option> }
+                                            </select>
+                                            break;
+                                        case BlocType.EpisodeSuivant:
+                                            <div class="row" style="flex-wrap:nowrap">
+                                                <select @bind="b.SeriesName" disabled="@(!CanEdit)">
+                                                    <option value="">Série choisie à l'insertion</option>
+                                                    @foreach (var s in _series) { <option value="@s">@s</option> }
+                                                </select>
+                                                <input type="number" min="1" max="20" style="width:70px" title="Épisodes à la suite" @bind="b.Count" disabled="@(!CanEdit)" />
+                                            </div>
+                                            break;
+                                        case BlocType.EcranPub:
+                                            <label class="small">Durée visée (s) <input type="number" min="10" max="1800" step="10" style="width:90px" @bind="b.DurationSeconds" disabled="@(!CanEdit)" /></label>
+                                            break;
+                                        case BlocType.HabillageDuProgramme:
+                                            <select @bind="b.AtelierKind" disabled="@(!CanEdit)">
+                                                <option value="0">Jingle avant programme</option>
+                                                <option value="2">Générique</option>
+                                                <option value="3">Bande-annonce</option>
+                                            </select>
+                                            break;
+                                    }
+                                </td>
+                                <td><input style="width:120px" @bind="b.Label" maxlength="60" placeholder="@ProgrammeTypes.TypeLabel(b.Type)" disabled="@(!CanEdit)" /></td>
+                                <td>
+                                    @if (CanEdit)
+                                    {
+                                        <div class="row" style="flex-wrap:nowrap">
+                                            <button class="btn sm" disabled="@(index == 0)" @onclick="() => Move(index, -1)">▲</button>
+                                            <button class="btn sm" disabled="@(index == _edit.Blocs.Count - 1)" @onclick="() => Move(index, 1)">▼</button>
+                                            <button class="btn sm danger" @onclick="() => _edit.Blocs.RemoveAt(index)">✕</button>
+                                        </div>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                        @if (_edit.Blocs.Count == 0)
+                        {
+                            <tr><td colspan="5" class="muted">Aucun bloc : ajoutez-en ci-dessous.</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @if (CanEdit)
+            {
+                <div class="row" style="margin-top:10px;flex-wrap:wrap;gap:6px">
+                    <span class="small muted">Ajouter :</span>
+                    <button class="btn sm" @onclick="() => Add(BlocType.EcranPub)">Écran pub</button>
+                    <button class="btn sm" @onclick="() => Add(BlocType.HabillageDuProgramme)">Jingle du programme</button>
+                    <button class="btn sm" @onclick="() => Add(BlocType.AuChoix)">Film au choix</button>
+                    <button class="btn sm" @onclick="() => Add(BlocType.EpisodeSuivant)">Épisode suivant</button>
+                    <button class="btn sm" @onclick="() => Add(BlocType.AuHasard)">Au hasard</button>
+                    <button class="btn sm" @onclick="() => Add(BlocType.Media)">Média fixe</button>
+                </div>
+                <p class="small muted">« Jingle du programme » reprend la création Rétro 95 de l'atelier dont le titre est celui du programme (ou de la série), ou qui lui a été liée. S'il n'y en a pas, le bloc est sauté et la régie le signale.</p>
+                <div class="row" style="margin-top:16px">
+                    <button class="btn primary" @onclick="SaveAsync">Enregistrer</button>
+                    <span class="grow"></span>
+                    @if (_edit.Id != 0)
+                    {
+                        <button class="btn danger" @onclick="DeleteAsync">@(_confirmDelete ? "Confirmer la suppression" : "Supprimer")</button>
+                    }
+                </div>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+    private System.Security.Claims.ClaimsPrincipal _user = new();
+    private bool CanEdit => Perm.Playlist(_user);
+
+    private List<ProgrammeType> _types = new();
+    private List<MediaAsset> _fixedAssets = new();
+    private List<string> _series = new();
+    private ProgrammeType? _edit;
+    private string? _message;
+    private bool _ok, _confirmDelete;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthState is not null) _user = (await AuthState).User;
+        await LoadAsync();
+        await using var db = await DbFactory.CreateDbContextAsync();
+        // Médias « fixes » : surtout de l'habillage et des interludes.
+        _fixedAssets = await db.MediaAssets.AsNoTracking()
+            .Where(a => a.Status == AssetStatus.Pret && a.Kind != AssetKind.Film && a.Kind != AssetKind.Episode)
+            .OrderBy(a => a.Kind).ThenBy(a => a.Title).Take(500).ToListAsync();
+        _series = await Types.SeriesAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _types = await db.ProgrammeTypes.AsNoTracking().Include(t => t.Blocs).OrderBy(t => t.Name).ToListAsync();
+    }
+
+    private void Select(ProgrammeType t)
+    {
+        _confirmDelete = false;
+        _message = null;
+        _edit = new ProgrammeType
+        {
+            Id = t.Id, Name = t.Name, Description = t.Description,
+            Blocs = t.Blocs.OrderBy(b => b.Position).Select(b => new ProgrammeTypeBloc
+            {
+                Type = b.Type, Label = b.Label, AssetId = b.AssetId, Kind = b.Kind, SeriesName = b.SeriesName,
+                Count = b.Count, DurationSeconds = b.DurationSeconds, AtelierKind = b.AtelierKind,
+            }).ToList(),
+        };
+    }
+
+    private void New()
+    {
+        _confirmDelete = false;
+        _edit = new ProgrammeType { Name = "Nouveau programme type" };
+    }
+
+    private void Add(BlocType type) => _edit?.Blocs.Add(new ProgrammeTypeBloc
+    {
+        Type = type,
+        Kind = type is BlocType.AuChoix or BlocType.AuHasard ? AssetKind.Film : null,
+        DurationSeconds = type == BlocType.EcranPub ? 120 : null,
+        AtelierKind = type == BlocType.HabillageDuProgramme ? 0 : null,
+    });
+
+    private void Move(int index, int delta)
+    {
+        if (_edit is null) return;
+        var target = index + delta;
+        if (target < 0 || target >= _edit.Blocs.Count) return;
+        (_edit.Blocs[index], _edit.Blocs[target]) = (_edit.Blocs[target], _edit.Blocs[index]);
+    }
+
+    private async Task SaveAsync()
+    {
+        if (!CanEdit || _edit is null) return;
+        if (string.IsNullOrWhiteSpace(_edit.Name)) { (_message, _ok) = ("Donnez un nom au programme type.", false); return; }
+        if (_edit.Blocs.Any(b => b.Type == BlocType.Media && b.AssetId is null)) { (_message, _ok) = ("Choisissez le média de chaque bloc « Média fixe ».", false); return; }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        ProgrammeType entity;
+        if (_edit.Id == 0)
+        {
+            entity = new ProgrammeType();
+            db.ProgrammeTypes.Add(entity);
+        }
+        else
+        {
+            entity = await db.ProgrammeTypes.Include(t => t.Blocs).FirstAsync(t => t.Id == _edit.Id);
+            db.ProgrammeTypeBlocs.RemoveRange(entity.Blocs);
+            entity.Blocs.Clear();
+        }
+        entity.Name = _edit.Name.Trim();
+        entity.Description = string.IsNullOrWhiteSpace(_edit.Description) ? null : _edit.Description.Trim();
+        for (var i = 0; i < _edit.Blocs.Count; i++)
+        {
+            var b = _edit.Blocs[i];
+            entity.Blocs.Add(new ProgrammeTypeBloc
+            {
+                Position = i, Type = b.Type, Label = string.IsNullOrWhiteSpace(b.Label) ? null : b.Label.Trim(),
+                AssetId = b.Type == BlocType.Media ? b.AssetId : null,
+                Kind = b.Type is BlocType.AuChoix or BlocType.AuHasard ? b.Kind : null,
+                SeriesName = b.Type == BlocType.EpisodeSuivant && !string.IsNullOrWhiteSpace(b.SeriesName) ? b.SeriesName : null,
+                Count = Math.Clamp(b.Count, 1, 20),
+                DurationSeconds = b.Type == BlocType.EcranPub ? Math.Clamp(b.DurationSeconds ?? 120, 10, 1800) : null,
+                AtelierKind = b.Type == BlocType.HabillageDuProgramme ? b.AtelierKind ?? 0 : null,
+            });
+        }
+        await db.SaveChangesAsync();
+        _edit.Id = entity.Id;
+        await LoadAsync();
+        (_message, _ok) = ($"« {entity.Name} » enregistré. Il est disponible dans les conducteurs.", true);
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (!CanEdit || _edit is null || _edit.Id == 0) return;
+        if (!_confirmDelete) { _confirmDelete = true; return; }
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.ProgrammeTypes.FindAsync(_edit.Id);
+        if (entity is not null)
+        {
+            db.ProgrammeTypes.Remove(entity);
+            await db.SaveChangesAsync();
+        }
+        _edit = null;
+        _confirmDelete = false;
+        await LoadAsync();
+        (_message, _ok) = ("Programme type supprimé.", true);
+    }
+}

@@ -99,6 +99,7 @@ builder.Services.AddSingleton<NAR.Server.Services.Atelier.Retro95Renderer>();
 builder.Services.AddSingleton<NAR.Server.Services.Atelier.AtelierService>();
 builder.Services.AddHostedService<NAR.Server.Services.Atelier.AtelierWorker>();
 builder.Services.AddSingleton<Diffusion>();
+builder.Services.AddSingleton<ProgrammeTypes>();
 builder.Services.AddSingleton<EngineSupervisor>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<EngineSupervisor>());
 builder.Services.AddSingleton<EngineMonitor>();
@@ -114,6 +115,7 @@ await using (var db = await app.Services.GetRequiredService<IDbContextFactory<Na
     await db.Database.MigrateAsync();
 }
 await app.Services.GetRequiredService<Seeder>().SeedAsync();
+await app.Services.GetRequiredService<ProgrammeTypes>().SeedAsync();
 app.Logger.LogInformation("NounoursAutoRegie {Version} — données dans {Data}",
     typeof(Program).Assembly.GetName().Version?.ToString(3), dataDir);
 

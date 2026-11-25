@@ -275,3 +275,71 @@ public class AtelierCreation
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? FinishedAt { get; set; }
 }
+
+/// <summary>Nature d'un bloc de programme type.</summary>
+public enum BlocType
+{
+    /// <summary>Toujours le même média (ouverture d'écran pub, générique de case…).</summary>
+    Media,
+    /// <summary>Un média tiré au sort parmi un type (film, clip, jingle…).</summary>
+    AuHasard,
+    /// <summary>Choisi au moment de l'insertion (le film de la soirée…).</summary>
+    AuChoix,
+    /// <summary>L'épisode suivant d'une série, d'après ce que la chaîne a déjà programmé.</summary>
+    EpisodeSuivant,
+    /// <summary>Spots tirés au sort jusqu'à la durée voulue.</summary>
+    EcranPub,
+    /// <summary>Création Rétro 95 de l'atelier liée au programme du modèle (jingle, générique, bande-annonce).</summary>
+    HabillageDuProgramme,
+}
+
+/// <summary>Programme type : une suite de blocs réutilisable (« Film du soir », « Série du midi »…).</summary>
+public class ProgrammeType
+{
+    public int Id { get; set; }
+    [MaxLength(100)] public string Name { get; set; } = "";
+    [MaxLength(500)] public string? Description { get; set; }
+    public List<ProgrammeTypeBloc> Blocs { get; set; } = new();
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public class ProgrammeTypeBloc
+{
+    public int Id { get; set; }
+    public int ProgrammeTypeId { get; set; }
+    public ProgrammeType? ProgrammeType { get; set; }
+    public int Position { get; set; }
+    public BlocType Type { get; set; }
+
+    /// <summary>Libellé affiché (« Film », « Pub »…).</summary>
+    [MaxLength(60)] public string? Label { get; set; }
+
+    /// <summary>Média fixe (bloc Media).</summary>
+    public int? AssetId { get; set; }
+    public MediaAsset? Asset { get; set; }
+
+    /// <summary>Type de média (AuHasard, AuChoix).</summary>
+    public AssetKind? Kind { get; set; }
+
+    /// <summary>Série (EpisodeSuivant) ; vide = choisie à l'insertion.</summary>
+    [MaxLength(300)] public string? SeriesName { get; set; }
+
+    /// <summary>Nombre d'épisodes à la suite (EpisodeSuivant).</summary>
+    public int Count { get; set; } = 1;
+
+    /// <summary>Durée visée en secondes (EcranPub).</summary>
+    public int? DurationSeconds { get; set; }
+
+    /// <summary>Création de l'atelier voulue (HabillageDuProgramme) : 0 jingle, 2 générique, 3 bande-annonce.</summary>
+    public int? AtelierKind { get; set; }
+}
+
+/// <summary>Où en est chaque chaîne dans chaque série (pour « épisode suivant »).</summary>
+public class SeriesProgress
+{
+    public int Id { get; set; }
+    public int ChannelId { get; set; }
+    [MaxLength(300)] public string SeriesName { get; set; } = "";
+    public int? LastAssetId { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}

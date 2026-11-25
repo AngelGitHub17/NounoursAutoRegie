@@ -117,3 +117,7 @@ table.grid td.num { font-family: var(--mono); white-space: nowrap; }
 
 #blazor-error-ui { display: none; position: fixed; bottom: 0; left: 0; right: 0; background: var(--live); color: #fff; padding: 8px 16px; z-index: 10; }
 #blazor-error-ui .dismiss { float: right; cursor: pointer; }
+
+/* Programmes types : menus contenus pour garder les boutons visibles */
+.pt-blocs select { max-width: 240px; }
+.pt-blocs td:nth-child(3) select { max-width: 300px; }
