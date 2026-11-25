@@ -76,8 +76,9 @@ public sealed partial class ProgrammeTypes(IDbContextFactory<NarDbContext> dbFac
     /// <summary>Déplie un programme type pour une chaîne, sans rien enregistrer (aperçu).</summary>
     /// <param name="choices">Média choisi pour chaque bloc « au choix » (id du bloc → id du média).</param>
     /// <param name="seriesChoices">Série choisie pour chaque bloc « épisode suivant » sans série fixée.</param>
+    /// <param name="hasardSiPasDeChoix">Grille : un bloc « au choix » sans choix est tiré au sort dans son type.</param>
     public async Task<Expansion> ExpandAsync(int channelId, int typeId, IReadOnlyDictionary<int, int> choices,
-        IReadOnlyDictionary<int, string> seriesChoices, CancellationToken ct = default)
+        IReadOnlyDictionary<int, string> seriesChoices, CancellationToken ct = default, bool hasardSiPasDeChoix = false)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var type = await db.ProgrammeTypes.AsNoTracking()
@@ -105,6 +106,7 @@ public sealed partial class ProgrammeTypes(IDbContextFactory<NarDbContext> dbFac
                     else warnings.Add($"« {label} » : le média de ce bloc n'est plus disponible.");
                     break;
 
+                case BlocType.AuChoix when hasardSiPasDeChoix && !choices.ContainsKey(b.Id):
                 case BlocType.AuHasard:
                 {
                     var pool = await db.MediaAssets.AsNoTracking()
@@ -224,16 +226,32 @@ public sealed partial class ProgrammeTypes(IDbContextFactory<NarDbContext> dbFac
         db.PlaylistEntries.AddRange(added);
         for (var i = 0; i < entries.Count; i++) entries[i].Position = i;
 
-        foreach (var (name, assetId) in expansion.SeriesUpdates)
+        await ApplySeriesAsync(db, channelId, expansion.SeriesUpdates, ct);
+        await db.SaveChangesAsync(ct);
+        return added[0].Id;
+    }
+
+    /// <summary>Enregistre le dernier épisode programmé de chaque série (sans SaveChanges).</summary>
+    public static async Task ApplySeriesAsync(NarDbContext db, int channelId, IReadOnlyDictionary<string, int?> updates, CancellationToken ct)
+    {
+        foreach (var (name, assetId) in updates)
         {
             var progress = await db.SeriesProgress.FirstOrDefaultAsync(p => p.ChannelId == channelId && p.SeriesName == name, ct);
             if (progress is null) db.SeriesProgress.Add(progress = new SeriesProgress { ChannelId = channelId, SeriesName = name });
             progress.LastAssetId = assetId;
             progress.UpdatedAt = DateTimeOffset.UtcNow;
         }
-        await db.SaveChangesAsync(ct);
-        return added[0].Id;
     }
+
+    public static Task ApplySeriesAsync(NarDbContext db, int channelId, Dictionary<string, int> updates, CancellationToken ct) =>
+        ApplySeriesAsync(db, channelId, updates.ToDictionary(kv => kv.Key, kv => (int?)kv.Value), ct);
+
+    /// <summary>Épisodes d'une série dans l'ordre de diffusion.</summary>
+    public static async Task<List<MediaAsset>> EpisodesAsync(NarDbContext db, string series, CancellationToken ct) =>
+        (await db.MediaAssets.AsNoTracking().Where(a => a.SeriesName == series && a.Status == AssetStatus.Pret).ToListAsync(ct))
+        .Where(a => a.Duration > TimeSpan.Zero)
+        .OrderBy(a => a.SeasonNumber ?? int.MaxValue).ThenBy(a => a.EpisodeNumber ?? int.MaxValue).ThenBy(a => a.Title, StringComparer.OrdinalIgnoreCase)
+        .ToList();
 
     private static async Task<MediaAsset?> FindCreationAsync(NarDbContext db, MediaAsset programme, int atelierKind, CancellationToken ct)
     {

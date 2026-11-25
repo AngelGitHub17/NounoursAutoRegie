@@ -203,6 +203,12 @@ namespace NAR.Server.Data.Migrations
                         .HasMaxLength(16)
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("GrilleActive")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("GrilleHorizonJours")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("HasLogo")
                         .HasColumnType("INTEGER");
 
@@ -252,6 +258,11 @@ namespace NAR.Server.Data.Migrations
                     b.Property<double>("PreloadSeconds")
                         .HasColumnType("REAL");
 
+                    b.Property<string>("RemplissageKinds")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("SegmentSeconds")
                         .HasColumnType("INTEGER");
 
@@ -273,6 +284,45 @@ namespace NAR.Server.Data.Migrations
                     b.HasIndex("Number");
 
                     b.ToTable("Channels");
+                });
+
+            modelBuilder.Entity("NAR.Server.Data.GrilleCase", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Active")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("AssetId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ChannelId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<TimeSpan>("Heure")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Jours")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ProgrammeTypeId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SeriesName")
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AssetId");
+
+                    b.HasIndex("ChannelId");
+
+                    b.HasIndex("ProgrammeTypeId");
+
+                    b.ToTable("GrilleCases");
                 });
 
             modelBuilder.Entity("NAR.Server.Data.MediaAsset", b =>
@@ -502,6 +552,10 @@ namespace NAR.Server.Data.Migrations
                     b.Property<DateTimeOffset?>("FixedStart")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("GroupKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
                     b.Property<TimeSpan?>("InPoint")
                         .HasColumnType("TEXT");
 
@@ -516,6 +570,9 @@ namespace NAR.Server.Data.Migrations
                     b.Property<int>("Position")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("Remplissage")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("StartMode")
                         .HasColumnType("INTEGER");
 
@@ -526,6 +583,8 @@ namespace NAR.Server.Data.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("AssetId");
+
+                    b.HasIndex("GroupKey");
 
                     b.HasIndex("Key")
                         .IsUnique();
@@ -651,6 +710,32 @@ namespace NAR.Server.Data.Migrations
                         .OnDelete(DeleteBehavior.SetNull);
 
                     b.Navigation("FillerAsset");
+                });
+
+            modelBuilder.Entity("NAR.Server.Data.GrilleCase", b =>
+                {
+                    b.HasOne("NAR.Server.Data.MediaAsset", "Asset")
+                        .WithMany()
+                        .HasForeignKey("AssetId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("NAR.Server.Data.Channel", "Channel")
+                        .WithMany()
+                        .HasForeignKey("ChannelId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("NAR.Server.Data.ProgrammeType", "ProgrammeType")
+                        .WithMany()
+                        .HasForeignKey("ProgrammeTypeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Asset");
+
+                    b.Navigation("Channel");
+
+                    b.Navigation("ProgrammeType");
                 });
 
             modelBuilder.Entity("NAR.Server.Data.MediaAsset", b =>

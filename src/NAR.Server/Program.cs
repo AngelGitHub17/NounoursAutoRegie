@@ -100,6 +100,8 @@ builder.Services.AddSingleton<NAR.Server.Services.Atelier.AtelierService>();
 builder.Services.AddHostedService<NAR.Server.Services.Atelier.AtelierWorker>();
 builder.Services.AddSingleton<Diffusion>();
 builder.Services.AddSingleton<ProgrammeTypes>();
+builder.Services.AddSingleton<Grille>();
+builder.Services.AddHostedService<GrilleWorker>();
 builder.Services.AddSingleton<EngineSupervisor>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<EngineSupervisor>());
 builder.Services.AddSingleton<EngineMonitor>();

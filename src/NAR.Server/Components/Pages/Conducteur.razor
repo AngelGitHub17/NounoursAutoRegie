@@ -69,7 +69,11 @@ else if (_channel is not null)
                             var next = status?.NextId == e.Key;
                             <tr @key="e.Id" class="@(playing ? "playing" : next ? "next" : "")" @onclick="() => _selected = e.Id" style="cursor:pointer;@(_selected == e.Id ? "outline:1px solid var(--accent);outline-offset:-1px" : "")">
                                 <td class="num">
-                                    @if (plan?.Start is { } st) { @Fmt.Clock(st) }
+                                    @if (plan?.Start is { } st)
+                                    {
+                                        @if (Fmt.DayIfNotToday(st) is { Length: > 0 } day) { <div class="small muted">@day</div> }
+                                        @Fmt.Clock(st)
+                                    }
                                     else if (plan?.Offset is { } off) { <span class="muted">+@Fmt.Timecode(off)</span> }
                                     else if (plan is null) { <span class="muted small">diffusé</span> }
                                 </td>
@@ -78,6 +82,8 @@ else if (_channel is not null)
                                     @if (playing) { <span class="onair" style="margin-right:6px">EN COURS</span> }
                                     else if (next) { <span class="badge info" style="margin-right:6px">À suivre</span> }
                                     @e.DisplayTitle
+                                    @if (e.Remplissage) { <span class="badge" style="margin-left:6px" title="Remplissage automatique entre deux cases">remplissage</span> }
+                                    else if (e.GroupKey is not null && e.StartMode == StartMode.HeureFixe) { <span class="badge info" style="margin-left:6px" title="Programmé par la grille de la semaine">grille</span> }
                                     @if (e.Asset?.Status is not AssetStatus.Pret)
                                     {
                                         <span class="badge @Fmt.Status(e.Asset!.Status).Css" style="margin-left:6px">@Fmt.Status(e.Asset.Status).Label</span>

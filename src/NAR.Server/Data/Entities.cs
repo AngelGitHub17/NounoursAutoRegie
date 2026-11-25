@@ -70,6 +70,14 @@ public class Channel
     public bool OverlayRating { get; set; } = true;
     public bool OverlayRatingAlways { get; set; }
 
+    // Grille de la semaine.
+    /// <summary>La régie remplit elle-même le conducteur d'après la grille.</summary>
+    public bool GrilleActive { get; set; }
+    /// <summary>Nombre de jours programmés à l'avance.</summary>
+    public int GrilleHorizonJours { get; set; } = 2;
+    /// <summary>Types de médias utilisés pour combler les trous entre deux cases (séparés par des virgules).</summary>
+    [MaxLength(200)] public string RemplissageKinds { get; set; } = "BandeAnnonce,Clip";
+
     public int? FillerAssetId { get; set; }
     public MediaAsset? FillerAsset { get; set; }
 
@@ -188,6 +196,12 @@ public class PlaylistEntry
     public DateTimeOffset? FixedStart { get; set; }
     public TimeSpan? InPoint { get; set; }
     public TimeSpan? OutPoint { get; set; }
+
+    /// <summary>Case de grille d'origine (« grille:12:202611252050 ») ; null = ajouté à la main.</summary>
+    [MaxLength(64)] public string? GroupKey { get; set; }
+
+    /// <summary>Remplissage automatique entre deux cases de la grille.</summary>
+    public bool Remplissage { get; set; }
 
     public string DisplayTitle => string.IsNullOrWhiteSpace(TitleOverride) ? Asset?.Title ?? "?" : TitleOverride!;
 
@@ -342,4 +356,32 @@ public class SeriesProgress
     [MaxLength(300)] public string SeriesName { get; set; } = "";
     public int? LastAssetId { get; set; }
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>Case de la grille de la semaine : tel programme type, tels jours, à telle heure.</summary>
+public class GrilleCase
+{
+    public int Id { get; set; }
+    public int ChannelId { get; set; }
+    public Channel? Channel { get; set; }
+
+    /// <summary>Jours de diffusion : lundi = 1, mardi = 2, mercredi = 4… dimanche = 64.</summary>
+    public int Jours { get; set; } = 127;
+
+    /// <summary>Heure de début (heure locale).</summary>
+    public TimeSpan Heure { get; set; } = new(20, 50, 0);
+
+    public int ProgrammeTypeId { get; set; }
+    public ProgrammeType? ProgrammeType { get; set; }
+
+    /// <summary>Série pour les blocs « épisode suivant » sans série fixée.</summary>
+    [MaxLength(300)] public string? SeriesName { get; set; }
+
+    /// <summary>Média pour les blocs « au choix » (sinon : tiré au sort dans le type du bloc).</summary>
+    public int? AssetId { get; set; }
+    public MediaAsset? Asset { get; set; }
+
+    public bool Active { get; set; } = true;
+
+    public static int Bit(DayOfWeek d) => 1 << (((int)d + 6) % 7);
 }

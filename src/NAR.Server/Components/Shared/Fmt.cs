@@ -14,6 +14,15 @@ public static class Fmt
 
     public static string Clock(DateTimeOffset t) => t.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture);
 
+    private static readonly string[] Days = ["dim.", "lun.", "mar.", "mer.", "jeu.", "ven.", "sam."];
+
+    /// <summary>Jour abrégé (« jeu. 26 ») si ce n'est pas aujourd'hui, sinon vide.</summary>
+    public static string DayIfNotToday(DateTimeOffset t)
+    {
+        var local = t.ToLocalTime();
+        return local.Date == DateTime.Today ? "" : $"{Days[(int)local.DayOfWeek]} {local.Day}";
+    }
+
     public static string Seconds(double? s) => s is { } v ? Duration(TimeSpan.FromSeconds(Math.Max(0, v))) : "—";
 
     public static bool TryParseTime(string? text, out TimeSpan value)
