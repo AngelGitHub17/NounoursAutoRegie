@@ -20,11 +20,11 @@ public static class Epg
 
     public static void MapEpg(this WebApplication app)
     {
-        app.MapGet("/live/epg.xml", async (HttpContext http, IDbContextFactory<NarDbContext> dbFactory, ScheduleService schedule, int? heures) =>
+        app.MapGet("/live/epg.xml", async (HttpContext http, IDbContextFactory<NarDbContext> dbFactory, ScheduleService schedule, int? heures, int? chaine) =>
         {
             var horizon = TimeSpan.FromHours(Math.Clamp(heures ?? 48, 1, 168));
             await using var db = await dbFactory.CreateDbContextAsync();
-            var channels = await db.Channels.AsNoTracking().Where(c => c.Enabled).OrderBy(c => c.Number).ToListAsync();
+            var channels = await db.Channels.AsNoTracking().Where(c => c.Enabled && (chaine == null || c.Id == chaine)).OrderBy(c => c.Number).ToListAsync();
 
             var settings = new XmlWriterSettings { Async = true, Indent = true, Encoding = new UTF8Encoding(false) };
             http.Response.ContentType = "application/xml; charset=utf-8";

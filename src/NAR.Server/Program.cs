@@ -43,7 +43,9 @@ var dataDir = nar.ResolvedDataDirectory;
 Directory.CreateDirectory(dataDir);
 
 if (string.IsNullOrEmpty(builder.Configuration["ASPNETCORE_URLS"]) && string.IsNullOrEmpty(builder.Configuration["urls"]))
-    builder.WebHost.UseUrls($"http://0.0.0.0:{nar.HttpPort}");
+    builder.WebHost.UseUrls(nar.PublicPort > 0 && nar.PublicPort != nar.HttpPort
+        ? [$"http://0.0.0.0:{nar.HttpPort}", $"http://0.0.0.0:{nar.PublicPort}"]
+        : [$"http://0.0.0.0:{nar.HttpPort}"]);
 
 builder.Logging.ClearProviders();
 builder.Logging.AddSimpleConsole(o =>
@@ -96,6 +98,7 @@ builder.Services.AddSingleton<NAR.Server.Services.Atelier.AudioAnalyzer>();
 builder.Services.AddSingleton<NAR.Server.Services.Atelier.Retro95Renderer>();
 builder.Services.AddSingleton<NAR.Server.Services.Atelier.AtelierService>();
 builder.Services.AddHostedService<NAR.Server.Services.Atelier.AtelierWorker>();
+builder.Services.AddSingleton<Diffusion>();
 builder.Services.AddSingleton<EngineSupervisor>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<EngineSupervisor>());
 builder.Services.AddSingleton<EngineMonitor>();
@@ -115,6 +118,29 @@ app.Logger.LogInformation("NounoursAutoRegie {Version} — données dans {Data}"
     typeof(Program).Assembly.GetName().Version?.ToString(3), dataDir);
 
 app.UseExceptionHandler("/erreur", createScopeForErrors: true);
+
+// Port de diffusion (ouvert sur Internet) : uniquement les flux /live/…, et seulement avec la clé.
+if (nar.PublicPort > 0 && nar.PublicPort != nar.HttpPort)
+{
+    app.Use(async (context, next) =>
+    {
+        if (context.Connection.LocalPort == nar.PublicPort)
+        {
+            if (!context.Request.Path.StartsWithSegments("/live"))
+            {
+                context.Response.StatusCode = StatusCodes.Status404NotFound;
+                return;
+            }
+            if (!context.RequestServices.GetRequiredService<Diffusion>().KeyMatches(context.Request.Query["cle"]))
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                await context.Response.WriteAsync("clé de diffusion manquante ou invalide");
+                return;
+            }
+        }
+        await next();
+    });
+}
 
 // Tant qu'aucun compte n'existe, toute la régie mène à la page d'installation.
 app.Use(async (context, next) =>
@@ -145,6 +171,7 @@ app.MapSmbRelay();
 app.MapJellyfinRelay();
 app.MapAtelierFiles();
 app.MapAccountEndpoints();
+app.MapDiffusion();
 
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 

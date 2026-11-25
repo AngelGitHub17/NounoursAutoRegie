@@ -1,0 +1,103 @@
+@page "/diffusion"
+@attribute [Authorize(Roles = Roles.Admin)]
+@rendermode InteractiveServer
+@inject IDbContextFactory<NarDbContext> DbFactory
+@inject Diffusion Diffusion
+@inject NavigationManager Nav
+
+<PageTitle>Diffusion — NounoursAutoRegie</PageTitle>
+
+<h1>Diffusion</h1>
+<p class="lead">Envoyer les chaînes de la régie vers l'extérieur : ton site Nounours.TV, ou un lecteur IPTV hors de la maison.</p>
+
+@if (_message is not null) { <div class="alert @(_ok ? "ok" : "error")">@_message</div> }
+
+<div class="panel">
+    <h2 style="margin-top:0">1. Ouvrir le port de diffusion sur la box</h2>
+    <p class="small">La régie écoute sur deux ports :</p>
+    <ul class="small">
+        <li><b>@Diffusion.LocalPort</b> : la régie elle-même. <b>Ne l'ouvre pas sur Internet.</b></li>
+        <li><b>@Diffusion.PublicPort</b> : le port de diffusion. Il ne sert que les flux et le guide des programmes, et seulement avec la clé ci-dessous. C'est lui qu'il faut ouvrir.</li>
+    </ul>
+    <p class="small">Dans ta Freebox (Paramètres de la Freebox → Gestion des ports), ajoute une redirection : port externe <b>@Diffusion.PublicPort</b> (ou un autre libre) → IP du conteneur (<span class="mono">@_host</span>), port <b>@Diffusion.PublicPort</b>, TCP.</p>
+    <div class="form-grid">
+        <label class="field"><span>Adresse publique (IP de la box ou nom DynHost, et port externe)</span>
+            <input @bind="_settings.PublicAddress" placeholder="ex. 82.67.240.20:@Diffusion.PublicPort ou tv.didikaria.fr:@Diffusion.PublicPort" />
+        </label>
+        <label class="field"><span>Adresse du site Nounours.TV</span>
+            <input @bind="_settings.SiteUrl" placeholder="https://ntvbydidikaria.fr" />
+        </label>
+    </div>
+    <div class="row" style="margin-top:12px">
+        <button class="btn primary" @onclick="Save">Enregistrer</button>
+    </div>
+
+    <h2>2. Clé de diffusion</h2>
+    <div class="row">
+        <span class="mono" style="user-select:all">@Diffusion.Key</span>
+        <span class="grow"></span>
+        <button class="btn sm danger" @onclick="Regenerate">@(_confirmKey ? "Confirmer : les anciens liens cesseront de marcher" : "Nouvelle clé")</button>
+    </div>
+
+    <h2>3. Relais pour le site Nounours.TV</h2>
+    <p class="small">Le site est en HTTPS et la régie est chez toi : comme pour ErsatzTV avec <span class="mono">stream.php</span>, le site relaie les flux. Télécharge <b>nar.php</b> (déjà réglé avec ton adresse et ta clé) et dépose-le dans <span class="mono">www3/</span>, à côté de <span class="mono">stream.php</span>.</p>
+    <a class="btn @(string.IsNullOrEmpty(Diffusion.PublicBase) ? "" : "primary")" href="/diffusion/nar.php" download="nar.php">Télécharger nar.php</a>
+    @if (string.IsNullOrEmpty(Diffusion.PublicBase))
+    {
+        <span class="small muted" style="margin-left:8px">Renseigne d'abord l'adresse publique.</span>
+    }
+
+    <h2>4. Chaînes à créer dans Nounours.TV</h2>
+    <p class="small">Administration → Chaînes IPTV → nouvelle chaîne de type <b>Flux externe</b>, avec ces deux adresses :</p>
+    <div class="table-wrap">
+        <table class="grid">
+            <thead><tr><th>Chaîne</th><th>Adresse du flux (.m3u8)</th><th>Guide XMLTV</th></tr></thead>
+            <tbody>
+                @foreach (var c in _channels)
+                {
+                    <tr>
+                        <td>@c.Number · @c.Name</td>
+                        <td class="small mono" style="user-select:all;word-break:break-all">@Diffusion.SiteStreamUrl(c.Id)</td>
+                        <td class="small mono" style="user-select:all;word-break:break-all">@(string.IsNullOrEmpty(Diffusion.PublicBase) ? "—" : Diffusion.PublicEpgUrl(c.Id))</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <h2>Lecteurs IPTV (VLC, TiviMate…)</h2>
+    <p class="small">Sur ton réseau : <span class="mono" style="user-select:all">http://@_host:@Diffusion.LocalPort/live/chaines.m3u</span><br />
+    Depuis Internet : <span class="mono" style="user-select:all">@(string.IsNullOrEmpty(Diffusion.PublicBase) ? "renseigne l'adresse publique" : Diffusion.PublicM3uUrl)</span></p>
+</div>
+
+@code {
+    private DiffusionSettings _settings = new();
+    private List<Channel> _channels = new();
+    private string _host = "";
+    private string? _message;
+    private bool _ok;
+    private bool _confirmKey;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _settings = Diffusion.Settings;
+        _host = new Uri(Nav.BaseUri).Host;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _channels = await db.Channels.AsNoTracking().OrderBy(c => c.Number).ToListAsync();
+    }
+
+    private void Save()
+    {
+        Diffusion.Save(_settings);
+        _settings = Diffusion.Settings;
+        (_message, _ok) = ("Réglages enregistrés. Si tu avais déjà déposé nar.php, télécharge-le à nouveau.", true);
+    }
+
+    private void Regenerate()
+    {
+        if (!_confirmKey) { _confirmKey = true; return; }
+        _confirmKey = false;
+        Diffusion.RegenerateKey();
+        (_message, _ok) = ("Nouvelle clé créée : télécharge à nouveau nar.php et dépose-le sur le site.", true);
+    }
+}

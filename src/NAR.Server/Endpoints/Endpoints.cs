@@ -45,11 +45,14 @@ public static class Endpoints
             await using var db = await dbFactory.CreateDbContextAsync();
             var channels = await db.Channels.AsNoTracking().Where(c => c.Enabled).OrderBy(c => c.Number).ToListAsync();
             var root = $"{http.Request.Scheme}://{http.Request.Host}";
-            var sb = new StringBuilder($"#EXTM3U x-tvg-url=\"{root}/live/epg.xml\" url-tvg=\"{root}/live/epg.xml\"\n");
+            // Accès par le port de diffusion : la clé suit chaque adresse.
+            var key = http.Request.Query["cle"].ToString();
+            var q = key.Length > 0 ? "?cle=" + Uri.EscapeDataString(key) : "";
+            var sb = new StringBuilder($"#EXTM3U x-tvg-url=\"{root}/live/epg.xml{q}\" url-tvg=\"{root}/live/epg.xml{q}\"\n");
             foreach (var c in channels)
             {
                 sb.Append(CultureInfo.InvariantCulture, $"#EXTINF:-1 tvg-id=\"nar-{c.Id}\" tvg-chno=\"{c.Number}\" group-title=\"NounoursCorp\",{c.Name}\n");
-                sb.Append(CultureInfo.InvariantCulture, $"{root}/live/{c.Id}/index.m3u8\n");
+                sb.Append(CultureInfo.InvariantCulture, $"{root}/live/{c.Id}/index.m3u8{q}\n");
             }
             http.Response.Headers.AccessControlAllowOrigin = "*";
             return Results.Text(sb.ToString(), "audio/x-mpegurl");
@@ -79,6 +82,16 @@ public static class Endpoints
                 http.Response.ContentType = response.Content.Headers.ContentType?.ToString()
                                             ?? (path.EndsWith(".m3u8") ? "application/vnd.apple.mpegurl" : "video/mp2t");
                 http.Response.Headers.CacheControl = path.EndsWith(".m3u8") ? "no-cache" : "max-age=60";
+                var key = http.Request.Query["cle"].ToString();
+                if (path.EndsWith(".m3u8") && key.Length > 0)
+                {
+                    // Les segments héritent de la clé (un lecteur ne recopie pas la requête de la playlist).
+                    var text = await response.Content.ReadAsStringAsync(http.RequestAborted);
+                    var suffix = "?cle=" + Uri.EscapeDataString(key);
+                    var lines = text.Split('\n').Select(l => l.Length > 0 && l[0] != '#' && !l.Contains('?') ? l.TrimEnd('\r') + suffix : l);
+                    await http.Response.WriteAsync(string.Join('\n', lines), http.RequestAborted);
+                    return Results.Empty;
+                }
                 await response.Content.CopyToAsync(http.Response.Body, http.RequestAborted);
                 return Results.Empty;
             }

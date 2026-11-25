@@ -61,7 +61,7 @@ public sealed class OverlayCompositor : IDisposable
     }
 
     private float H => _format.Height;
-    private float Margin => (float)Math.Round(H * 0.05);
+    private float Margin => (float)Math.Round(H * 0.035);
     private bool Left => _config.Corner.Contains("gauche", StringComparison.OrdinalIgnoreCase);
     private bool Bottom => _config.Corner.StartsWith("bas", StringComparison.OrdinalIgnoreCase);
 
@@ -115,13 +115,14 @@ public sealed class OverlayCompositor : IDisposable
             stack.Add((_clock, show * 0.92));
         }
         if (Bottom) stack.Reverse();
-        var total = stack.Sum(s => s.Sprite.Height) + Math.Max(0, stack.Count - 1) * (int)(H * 0.012);
+        var gap = (int)(H * 0.006);
+        var total = stack.Sum(s => s.Sprite.Height) + Math.Max(0, stack.Count - 1) * gap;
         y = Bottom ? _format.Height - margin - total : margin;
         foreach (var (sprite, alpha) in stack)
         {
             var x = Left ? margin : w - margin - sprite.Width;
             Blend(frame, sprite, x, y, alpha);
-            y += sprite.Height + (int)(H * 0.012);
+            y += sprite.Height + gap;
         }
 
         // Signalétique : en bas du côté du logo (en haut si le logo est en bas).
@@ -173,15 +174,18 @@ public sealed class OverlayCompositor : IDisposable
     {
         try
         {
-            using var source = SKBitmap.Decode(path);
-            if (source is null)
+            using var decoded = SKBitmap.Decode(path);
+            if (decoded is null)
             {
                 _logger.LogWarning("Logo illisible : {Path}", path);
                 return null;
             }
+            // Les bords transparents du fichier sont retirés : le logo se cale vraiment dans le coin
+            // et contre l'horloge, quelle que soit la marge laissée dans le PNG.
+            using var source = TrimTransparent(decoded);
             var height = Math.Max(8, H * Math.Clamp(_config.LogoHeightPercent, 3, 25) / 100.0);
             var width = height * source.Width / source.Height;
-            var maxWidth = _format.Width * 0.28;
+            var maxWidth = _format.Width * 0.22;
             if (width > maxWidth)
             {
                 height *= maxWidth / width;
@@ -198,6 +202,31 @@ public sealed class OverlayCompositor : IDisposable
             _logger.LogWarning("Logo illisible ({Path}) : {Error}", path, ex.Message);
             return null;
         }
+    }
+
+    private static SKBitmap TrimTransparent(SKBitmap bitmap)
+    {
+        int w = bitmap.Width, h = bitmap.Height;
+        int left = w, top = h, right = -1, bottom = -1;
+        for (var y = 0; y < h; y++)
+        for (var x = 0; x < w; x++)
+        {
+            if (bitmap.GetPixel(x, y).Alpha <= 8) continue;
+            if (x < left) left = x;
+            if (x > right) right = x;
+            if (y < top) top = y;
+            if (y > bottom) bottom = y;
+        }
+        var copy = new SKBitmap();
+        if (right < 0 || (left == 0 && top == 0 && right == w - 1 && bottom == h - 1))
+        {
+            bitmap.CopyTo(copy);
+            return copy;
+        }
+        bitmap.ExtractSubset(copy, new SKRectI(left, top, right + 1, bottom + 1));
+        var result = copy.Copy();
+        copy.Dispose();
+        return result;
     }
 
     private Sprite RenderClock(string text)

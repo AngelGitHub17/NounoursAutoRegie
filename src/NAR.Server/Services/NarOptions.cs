@@ -10,6 +10,12 @@ public sealed class NarOptions
     public int HttpPort { get; set; } = 8090;
 
     /// <summary>Exécutable du moteur. Vide = recherche automatique à côté du serveur.</summary>
+    /// <summary>
+    /// Port « diffusion » à ouvrir sur Internet : il ne sert que les flux /live/… et exige la clé
+    /// de diffusion. La régie (HttpPort) reste ainsi sur le réseau local. 0 = désactivé.
+    /// </summary>
+    public int PublicPort { get; set; } = 8091;
+
     public string? EnginePath { get; set; }
 
     public string FfmpegPath { get; set; } = "ffmpeg";
