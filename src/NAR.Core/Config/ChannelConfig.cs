@@ -11,10 +11,16 @@ namespace NAR.Core.Config;
 public sealed class ChannelConfig
 {
     public string Name { get; set; } = "NounoursTV";
+
+    /// <summary>Numéro de version du conducteur : change à chaque modification depuis la régie.</summary>
+    public long Revision { get; set; }
     public FormatConfig Format { get; set; } = new();
     public EncoderConfig Encoder { get; set; } = new();
     public HlsConfig Hls { get; set; } = new();
     public int StatusPort { get; set; } = 8090;
+
+    /// <summary>Adresse d'écoute de la page de statut / HLS ("0.0.0.0" = tout le réseau, "127.0.0.1" = local).</summary>
+    public string StatusBind { get; set; } = "0.0.0.0";
     public string FfmpegPath { get; set; } = "ffmpeg";
     public string FfprobePath { get; set; } = "ffprobe";
 
@@ -42,6 +48,23 @@ public sealed class ChannelConfig
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
+
+    /// <summary>
+    /// Empreinte des réglages qui exigent de relancer le moteur (format, encodeur, sorties, ports).
+    /// Tout le reste (conducteur, bouche-trou, préchargement) se recharge à chaud.
+    /// </summary>
+    public string StructuralFingerprint() => JsonSerializer.Serialize(new
+    {
+        Name, Format, Encoder, Hls, StatusPort, StatusBind, FfmpegPath, FfprobePath, AsRunDirectory,
+    }, JsonOptions);
+
+    public static ChannelConfig Parse(string json, string baseDirectory)
+    {
+        var config = JsonSerializer.Deserialize<ChannelConfig>(json, JsonOptions)
+                     ?? throw new InvalidDataException("Configuration vide");
+        config.BaseDirectory = baseDirectory;
+        return config;
+    }
 
     public static ChannelConfig Load(string path)
     {

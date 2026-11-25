@@ -1,0 +1,26 @@
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<video @ref="_video" muted playsinline controls></video>
+
+@code {
+    [Parameter, EditorRequired] public string Url { get; set; } = "";
+    private ElementReference _video;
+    private string? _attached;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_attached == Url) return;
+        _attached = Url;
+        try { await JS.InvokeVoidAsync("narPlayer.attach", _video, Url); } catch (JSDisconnectedException) { }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_attached is null) return; // jamais attaché (rendu statique / pré-rendu)
+        try { await JS.InvokeVoidAsync("narPlayer.detach", _video); }
+        catch (JSDisconnectedException) { }
+        catch (ObjectDisposedException) { }
+        catch (InvalidOperationException) { }
+    }
+}

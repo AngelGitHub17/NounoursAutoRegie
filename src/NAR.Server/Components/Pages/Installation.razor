@@ -1,0 +1,68 @@
+@page "/installation"
+@attribute [AllowAnonymous]
+@layout Layout.BareLayout
+@inject Accounts Accounts
+@inject NavigationManager Nav
+
+<PageTitle>Installation — NounoursAutoRegie</PageTitle>
+
+@if (_alreadyDone)
+{
+    <div class="panel">
+        <h1>Installation déjà faite</h1>
+        <p class="muted">Un compte administrateur existe déjà.</p>
+        <a class="btn primary" href="/connexion">Se connecter</a>
+    </div>
+}
+else
+{
+    <form method="post" @formname="installation" @onsubmit="CreateAsync" class="panel">
+        <AntiforgeryToken />
+        <h1><span class="onair">ANTENNE</span> Bienvenue</h1>
+        <p class="muted" style="margin:0">Créez le compte administrateur de la régie. Il sert aussi hors ligne.</p>
+        @if (_error is not null)
+        {
+            <div class="alert error">@_error</div>
+        }
+        <label class="field"><span>Identifiant</span><input name="Form.UserName" value="@Form.UserName" autocomplete="username" required /></label>
+        <label class="field"><span>Nom affiché</span><input name="Form.DisplayName" value="@Form.DisplayName" /></label>
+        <label class="field"><span>Mot de passe (8 caractères min.)</span><input name="Form.Password" type="password" autocomplete="new-password" minlength="8" required /></label>
+        <label class="field"><span>Confirmation</span><input name="Form.Confirm" type="password" autocomplete="new-password" minlength="8" required /></label>
+        <button class="btn primary" type="submit">Créer le compte et ouvrir la régie</button>
+    </form>
+}
+
+@code {
+    [CascadingParameter] private HttpContext HttpContext { get; set; } = default!;
+    [SupplyParameterFromForm] private SetupForm Form { get; set; } = new();
+    private string? _error;
+    private bool _alreadyDone;
+
+    protected override async Task OnInitializedAsync() => _alreadyDone = await Accounts.HasUsersAsync();
+
+    private async Task CreateAsync()
+    {
+        if (await Accounts.HasUsersAsync()) { _alreadyDone = true; return; }
+        if (string.IsNullOrWhiteSpace(Form.UserName)) { _error = "Choisissez un identifiant."; return; }
+        if (Form.Password != Form.Confirm) { _error = "Les deux mots de passe ne correspondent pas."; return; }
+        try
+        {
+            var user = await Accounts.CreateAsync(Form.UserName!, Form.DisplayName ?? "", Form.Password ?? "", Roles.Admin);
+            await Accounts.SignInAsync(HttpContext, user);
+        }
+        catch (ArgumentException ex)
+        {
+            _error = ex.Message;
+            return;
+        }
+        Nav.NavigateTo("/");
+    }
+
+    private sealed class SetupForm
+    {
+        public string? UserName { get; set; }
+        public string? DisplayName { get; set; }
+        public string? Password { get; set; }
+        public string? Confirm { get; set; }
+    }
+}

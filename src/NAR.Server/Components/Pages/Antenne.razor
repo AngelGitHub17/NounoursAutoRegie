@@ -1,0 +1,158 @@
+@page "/"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject IDbContextFactory<NarDbContext> DbFactory
+@inject EngineMonitor Monitor
+@inject EngineSupervisor Supervisor
+
+<PageTitle>Antenne — NounoursAutoRegie</PageTitle>
+
+<div class="row" style="margin-bottom:16px">
+    <div class="grow">
+        <h1>Antenne</h1>
+        <p class="lead" style="margin:0">Toutes les chaînes en direct. Flux IPTV : <a href="/live/chaines.m3u" target="_blank">/live/chaines.m3u</a></p>
+    </div>
+    <a class="btn" href="/chaines/nouvelle">+ Nouvelle chaîne</a>
+</div>
+
+@if (_channels is null)
+{
+    <p class="muted">Chargement…</p>
+}
+else if (_channels.Count == 0)
+{
+    <div class="panel">
+        <p>Aucune chaîne pour l'instant.</p>
+        <a class="btn primary" href="/chaines/nouvelle">Créer une chaîne</a>
+    </div>
+}
+else
+{
+    <div class="mosaic">
+        @foreach (var c in _channels)
+        {
+            var engine = Supervisor.Get(c.Id);
+            var status = c.Enabled ? Monitor.Get(c.Id) : null;
+            var (label, css) = Fmt.Antenna(status?.State, engine);
+            <div class="screen" @key="c.Id">
+                @if (c.Enabled)
+                {
+                    <HlsPlayer Url="@($"/live/{c.Id}/index.m3u8")" />
+                }
+                else
+                {
+                    <video></video>
+                }
+                <div class="body">
+                    <div class="title">
+                        <span class="muted mono">@c.Number</span> @c.Name
+                        <span class="badge @css">@label</span>
+                        <span class="tc">@(status?.Timecode)</span>
+                    </div>
+                    @if (status?.CurrentTitle is not null && status.RemainingSeconds is { } rem)
+                    {
+                        <div class="progress"><div style="width:@Progress(c, status)%"></div></div>
+                    }
+                    <dl class="kv">
+                        <dt>À l'antenne</dt><dd title="@status?.CurrentTitle">@(status?.CurrentTitle ?? (status?.State == "Filler" ? "Bouche-trou" : "—"))</dd>
+                        <dt>Reste</dt><dd class="mono">@Fmt.Seconds(status?.RemainingSeconds)</dd>
+                        <dt>À suivre</dt><dd title="@status?.NextTitle">@(status?.NextTitle ?? "—")</dd>
+                        <dt>Format</dt><dd>@Fmt.Format(c)</dd>
+                        <dt>Santé</dt>
+                        <dd>
+                            @if (status is null)
+                            {
+                                <span class="muted">—</span>
+                            }
+                            else
+                            {
+                                <span title="Retard sur l'horloge">@($"{Math.Max(0, status.LateMs):0} ms")</span>
+                                <span class="muted"> · </span><span title="Images figées depuis le démarrage">@status.UnderrunFrames fig.</span>
+                                <span class="muted"> · </span><span title="Sources en échec">@status.SourceFailures échec(s)</span>
+                            }
+                        </dd>
+                    </dl>
+                    @if (status?.LastIncident is { } incident)
+                    {
+                        <div class="small" style="color:var(--warn)">Dernier incident : @incident</div>
+                    }
+                    @if (engine is { Restarts: > 0 })
+                    {
+                        <div class="small muted">Moteur relancé @engine.Restarts fois@(engine.LastExitCode is { } code ? $" (dernier code {code})" : "")</div>
+                    }
+                    <div class="row">
+                        @if (c.Enabled)
+                        {
+                            <button class="btn sm" @onclick="() => SetEnabled(c, false)">Éteindre</button>
+                            <button class="btn sm" @onclick="() => Supervisor.Restart(c.Id)">Redémarrer</button>
+                        }
+                        else
+                        {
+                            <button class="btn sm live" @onclick="() => SetEnabled(c, true)">Allumer l'antenne</button>
+                        }
+                        <a class="btn sm" href="/conducteur/@c.Id">Conducteur</a>
+                        <button class="btn sm" @onclick="() => ToggleLog(c.Id)">Journal</button>
+                        <a class="btn sm" href="/live/@c.Id/index.m3u8" target="_blank" title="Lien HLS public">HLS</a>
+                    </div>
+                    @if (_openLogs.Contains(c.Id))
+                    {
+                        <div class="logbox">@string.Join('\n', (engine?.Log ?? []).TakeLast(80))</div>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private List<Channel>? _channels;
+    private readonly HashSet<int> _openLogs = new();
+    private DateTime _lastRender;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        Monitor.Updated += OnUpdated;
+        Supervisor.Changed += OnUpdated;
+    }
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _channels = await db.Channels.AsNoTracking().OrderBy(c => c.Number).ThenBy(c => c.Name).ToListAsync();
+    }
+
+    private void OnUpdated()
+    {
+        if ((DateTime.UtcNow - _lastRender).TotalMilliseconds < 800) return;
+        _lastRender = DateTime.UtcNow;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private static double Progress(Channel c, EngineStatusSnapshot s) =>
+        s.CurrentDurationSeconds is double total && total > 0
+            ? Math.Clamp(100 * (1 - (s.RemainingSeconds ?? 0) / total), 0, 100)
+            : 0;
+
+    private async Task SetEnabled(Channel c, bool enabled)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.Channels.FindAsync(c.Id);
+        if (entity is null) return;
+        entity.Enabled = enabled;
+        await db.SaveChangesAsync();
+        c.Enabled = enabled;
+        Supervisor.Wake();
+    }
+
+    private void ToggleLog(int id)
+    {
+        if (!_openLogs.Remove(id)) _openLogs.Add(id);
+    }
+
+    public void Dispose()
+    {
+        Monitor.Updated -= OnUpdated;
+        Supervisor.Changed -= OnUpdated;
+    }
+}

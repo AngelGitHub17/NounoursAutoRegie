@@ -1,0 +1,428 @@
+@page "/conducteur"
+@page "/conducteur/{ChannelId:int}"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject IDbContextFactory<NarDbContext> DbFactory
+@inject EngineMonitor Monitor
+@inject NavigationManager Nav
+@using NAR.Core.Scheduling
+
+<PageTitle>Conducteur @_channel?.Name — NounoursAutoRegie</PageTitle>
+
+@if (_channels.Count == 0 && _loaded)
+{
+    <h1>Conducteurs</h1>
+    <div class="panel"><p>Aucune chaîne. <a href="/chaines/nouvelle">Créer une chaîne</a></p></div>
+}
+else if (_channel is not null)
+{
+    var status = Monitor.Get(_channel.Id);
+    <div class="row" style="margin-bottom:12px">
+        <div class="grow">
+            <h1>Conducteur</h1>
+            <p class="lead" style="margin:0">Chaque modification part à l'antenne en quelques secondes, sans coupure : l'élément en cours continue.</p>
+        </div>
+        <select value="@_channel.Id" @onchange="ChangeChannel">
+            @foreach (var c in _channels)
+            {
+                <option value="@c.Id">@c.Number — @c.Name</option>
+            }
+        </select>
+    </div>
+
+    <div class="panel row" style="margin-bottom:14px">
+        @if (!_channel.Enabled)
+        {
+            <span class="badge off">Antenne éteinte</span>
+            <span class="muted">Allumez-la depuis la page Antenne.</span>
+        }
+        else if (status is null)
+        {
+            <span class="badge info">Démarrage…</span>
+        }
+        else
+        {
+            <span class="onair">ANTENNE</span>
+            <span><b>@(status.CurrentTitle ?? (status.State == "Filler" ? "Bouche-trou" : "Mire"))</b></span>
+            <span class="muted mono">reste @Fmt.Seconds(status.RemainingSeconds)</span>
+            <span class="muted">→ à suivre : @(status.NextTitle ?? "—")</span>
+        }
+    </div>
+
+    @if (_message is not null) { <div class="alert @(_messageOk ? "ok" : "error")">@_message</div> }
+
+    <div class="layout-2">
+        <div>
+            <div class="table-wrap">
+                <table class="grid">
+                    <thead>
+                        <tr><th>Heure</th><th>Durée</th><th>Titre</th><th>Type</th><th>Départ</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                        @for (var i = 0; i < _entries.Count; i++)
+                        {
+                            var e = _entries[i];
+                            var index = i;
+                            var plan = i < _plan.Count ? _plan[i] : null;
+                            var playing = status?.CurrentId == e.Key;
+                            var next = status?.NextId == e.Key;
+                            <tr @key="e.Id" class="@(playing ? "playing" : next ? "next" : "")" @onclick="() => _selected = e.Id" style="cursor:pointer;@(_selected == e.Id ? "outline:1px solid var(--accent);outline-offset:-1px" : "")">
+                                <td class="num">
+                                    @if (plan?.Start is { } st) { @Fmt.Clock(st) }
+                                    else if (plan?.Offset is { } off) { <span class="muted">+@Fmt.Timecode(off)</span> }
+                                    else if (plan is null) { <span class="muted small">diffusé</span> }
+                                </td>
+                                <td class="num">@Fmt.Duration(plan?.Duration ?? e.PlayedDuration)</td>
+                                <td>
+                                    @if (playing) { <span class="onair" style="margin-right:6px">EN COURS</span> }
+                                    else if (next) { <span class="badge info" style="margin-right:6px">À suivre</span> }
+                                    @e.DisplayTitle
+                                    @if (e.Asset?.Status is not AssetStatus.Pret)
+                                    {
+                                        <span class="badge @Fmt.Status(e.Asset!.Status).Css" style="margin-left:6px">@Fmt.Status(e.Asset.Status).Label</span>
+                                    }
+                                    @if (plan is { CutBy.Ticks: > 0 })
+                                    {
+                                        <div class="small" style="color:var(--warn)">Coupé de @Fmt.Duration(plan.CutBy) par l'horaire suivant</div>
+                                    }
+                                    @if (plan is { GapBefore.TotalSeconds: >= 1 })
+                                    {
+                                        <div class="small" style="color:var(--warn)">@Fmt.Duration(plan.GapBefore) de bouche-trou avant ce programme</div>
+                                    }
+                                    @if (e.InPoint > TimeSpan.Zero || e.OutPoint > TimeSpan.Zero)
+                                    {
+                                        <div class="small muted">Extrait : @Fmt.Timecode(e.InPoint ?? TimeSpan.Zero) → @(e.OutPoint is { } o ? Fmt.Timecode(o) : "fin")</div>
+                                    }
+                                </td>
+                                <td class="small">@Fmt.Kind(e.Asset?.Kind ?? AssetKind.Autre)</td>
+                                <td class="small">
+                                    @if (e.StartMode == StartMode.HeureFixe && e.FixedStart is { } fs)
+                                    {
+                                        <span class="badge warn" title="Horaire fixe : coupe ce qui passe">⏱ @fs.ToLocalTime().ToString("dd/MM HH:mm:ss")</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="muted">Enchaîné</span>
+                                    }
+                                </td>
+                                <td @onclick:stopPropagation="true">
+                                    <div class="row" style="flex-wrap:nowrap">
+                                        <button class="btn sm" disabled="@(index == 0)" @onclick="() => MoveAsync(index, -1)" title="Monter">▲</button>
+                                        <button class="btn sm" disabled="@(index == _entries.Count - 1)" @onclick="() => MoveAsync(index, 1)" title="Descendre">▼</button>
+                                        <button class="btn sm" @onclick="() => Edit(e)">Modifier</button>
+                                        <button class="btn sm danger" @onclick="() => RemoveAsync(e)" title="Retirer">✕</button>
+                                    </div>
+                                </td>
+                            </tr>
+                            @if (_edit is not null && _edit.Id == e.Id)
+                            {
+                                <tr>
+                                    <td colspan="6" style="background:var(--panel-2)">
+                                        <div class="form-grid">
+                                            <label class="field"><span>Titre affiché</span><input @bind="_edit.Title" placeholder="@e.Asset?.Title" /></label>
+                                            <label class="field"><span>Départ</span>
+                                                <select @bind="_edit.Mode">
+                                                    <option value="@StartMode.Enchaine">Enchaîné au précédent</option>
+                                                    <option value="@StartMode.HeureFixe">Heure fixe (coupe ce qui passe)</option>
+                                                </select>
+                                            </label>
+                                            @if (_edit.Mode == StartMode.HeureFixe)
+                                            {
+                                                <label class="field"><span>Heure de départ</span><input type="datetime-local" step="1" @bind="_edit.FixedStart" /></label>
+                                            }
+                                            <label class="field"><span>Entrée (h:mm:ss)</span><input @bind="_edit.In" placeholder="0:00:00" /></label>
+                                            <label class="field"><span>Sortie (h:mm:ss)</span><input @bind="_edit.Out" placeholder="fin du fichier" /></label>
+                                        </div>
+                                        <div class="row" style="margin-top:12px">
+                                            <button class="btn primary" @onclick="SaveEditAsync">Enregistrer</button>
+                                            <button class="btn" @onclick="() => _edit = null">Annuler</button>
+                                            <span class="small muted">Durée du fichier : @Fmt.Duration(e.Asset?.Duration ?? TimeSpan.Zero)</span>
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        }
+                        @if (_entries.Count == 0)
+                        {
+                            <tr><td colspan="6" class="muted">Conducteur vide : ajoutez des médias depuis la colonne de droite.</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <div class="row" style="margin-top:10px">
+                <span class="muted">@_entries.Count élément(s) · durée totale <b class="mono">@Fmt.Timecode(_entries.Aggregate(TimeSpan.Zero, (t, e) => t + e.PlayedDuration))</b></span>
+                <span class="grow"></span>
+                <label class="check"><input type="checkbox" checked="@_channel.Loop" @onchange="ToggleLoopAsync" /> Recommencer au début à la fin (boucle)</label>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2 style="margin-top:0">Ajouter</h2>
+            <div class="row" style="margin-bottom:8px">
+                <input class="grow" placeholder="Rechercher…" @bind="PickerSearch" @bind:event="oninput" @bind:after="LoadPickerAsync" />
+            </div>
+            <div class="row" style="margin-bottom:8px">
+                <select class="grow" @bind="PickerKind" @bind:after="LoadPickerAsync">
+                    <option value="">Tous les types</option>
+                    @foreach (var k in Enum.GetValues<AssetKind>())
+                    {
+                        <option value="@k">@Fmt.Kind(k)</option>
+                    }
+                </select>
+            </div>
+            <p class="small muted" style="margin:0 0 8px">
+                @if (_selected is not null)
+                {
+                    <span>Insertion après la ligne sélectionnée · <a href="" @onclick="() => _selected = null" @onclick:preventDefault="true">ajouter à la fin</a></span>
+                }
+                else
+                {
+                    <span>Ajout à la fin du conducteur (cliquez une ligne pour insérer après).</span>
+                }
+            </p>
+            <div class="picker">
+                @foreach (var a in _picker)
+                {
+                    <div class="item" @key="a.Id">
+                        @if (a.HasThumbnail) { <img class="thumb" src="/medias/@a.Id/vignette.jpg" loading="lazy" alt="" /> } else { <div class="thumb"></div> }
+                        <div class="grow" style="min-width:0">
+                            <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="@a.Title">@a.Title</div>
+                            <div class="small muted">@Fmt.Kind(a.Kind) · @Fmt.Duration(a.Duration)</div>
+                        </div>
+                        <button class="btn sm" @onclick="() => AddAsync(a)">+</button>
+                    </div>
+                }
+                @if (_picker.Count == 0)
+                {
+                    <p class="muted small">Aucun média prêt. Ajoutez un dossier dans la <a href="/mediatheque">médiathèque</a>.</p>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public int? ChannelId { get; set; }
+
+    private List<Channel> _channels = new();
+    private Channel? _channel;
+    private List<PlaylistEntry> _entries = new();
+    private List<PlannedEntry?> _plan = new();
+    private List<MediaAsset> _picker = new();
+    private bool _loaded, _messageOk;
+    private string? _message;
+    private int? _selected;
+    private EditModel? _edit;
+    private DateTime _lastRender;
+
+    private string PickerSearch { get; set; } = "";
+    private string PickerKind { get; set; } = "";
+
+    private sealed class EditModel
+    {
+        public int Id { get; init; }
+        public string? Title { get; set; }
+        public StartMode Mode { get; set; }
+        public DateTime? FixedStart { get; set; }
+        public string? In { get; set; }
+        public string? Out { get; set; }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Monitor.Updated += OnMonitor;
+        await LoadPickerAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _channels = await db.Channels.AsNoTracking().OrderBy(c => c.Number).ThenBy(c => c.Name).ToListAsync();
+        _loaded = true;
+        if (ChannelId is null)
+        {
+            if (_channels.Count > 0) Nav.NavigateTo($"/conducteur/{_channels[0].Id}", replace: true);
+            return;
+        }
+        _channel = _channels.FirstOrDefault(c => c.Id == ChannelId);
+        _edit = null;
+        _selected = null;
+        await LoadEntriesAsync();
+    }
+
+    private void OnMonitor()
+    {
+        if ((DateTime.UtcNow - _lastRender).TotalMilliseconds < 900) return;
+        _lastRender = DateTime.UtcNow;
+        _ = InvokeAsync(() =>
+        {
+            Replan();
+            StateHasChanged();
+        });
+    }
+
+    private async Task LoadEntriesAsync()
+    {
+        if (_channel is null) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _entries = await db.PlaylistEntries.AsNoTracking().Include(e => e.Asset)
+            .Where(e => e.ChannelId == _channel.Id).OrderBy(e => e.Position).ToListAsync();
+        Replan();
+    }
+
+    /// <summary>
+    /// Heures prévues. Si l'antenne tourne, l'élément en cours sert de repère (début = maintenant − temps écoulé)
+    /// et la suite se lit à partir de lui (en boucle : on repart au début de la liste). Les éléments
+    /// déjà passés d'un conducteur sans boucle n'ont plus d'heure.
+    /// </summary>
+    private void Replan()
+    {
+        var status = _channel is null ? null : Monitor.Get(_channel.Id);
+        var order = Enumerable.Range(0, _entries.Count).ToList();
+        DateTimeOffset? anchorStart = null;
+        if (status is { CurrentId: { } currentId, RemainingSeconds: { } remaining, CurrentDurationSeconds: { } total }
+            && _entries.FindIndex(e => e.Key == currentId) is var anchor and >= 0)
+        {
+            anchorStart = DateTimeOffset.Now - TimeSpan.FromSeconds(total - remaining);
+            order = Enumerable.Range(anchor, _entries.Count - anchor)
+                .Concat(_channel!.Loop ? Enumerable.Range(0, anchor) : [])
+                .ToList();
+        }
+
+        var inputs = order.Select((index, k) =>
+        {
+            var e = _entries[index];
+            DateTimeOffset? fixedStart = k == 0 && anchorStart is not null ? anchorStart
+                : e.StartMode == StartMode.HeureFixe && e.FixedStart is { } fs ? fs : null;
+            return new PlanInput(e.Key, e.PlayedDuration, fixedStart);
+        }).ToList();
+        var planned = TimelinePlanner.Plan(inputs);
+
+        _plan = Enumerable.Repeat<PlannedEntry?>(null, _entries.Count).ToList();
+        for (var k = 0; k < order.Count; k++) _plan[order[k]] = planned[k];
+    }
+
+    private async Task LoadPickerAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var q = db.MediaAssets.AsNoTracking().Where(a => a.Status == AssetStatus.Pret);
+        if (!string.IsNullOrWhiteSpace(PickerSearch))
+        {
+            var s = $"%{PickerSearch.Trim()}%";
+            q = q.Where(a => EF.Functions.Like(a.Title, s) || EF.Functions.Like(a.FileName, s));
+        }
+        if (Enum.TryParse<AssetKind>(PickerKind, out var kind)) q = q.Where(a => a.Kind == kind);
+        _picker = await q.OrderBy(a => a.Title).Take(150).ToListAsync();
+    }
+
+    private void ChangeChannel(ChangeEventArgs e) => Nav.NavigateTo($"/conducteur/{e.Value}");
+
+    private async Task AddAsync(MediaAsset asset)
+    {
+        if (_channel is null) return;
+        var insertAt = _selected is { } sel ? _entries.FindIndex(x => x.Id == sel) + 1 : _entries.Count;
+        if (insertAt <= 0) insertAt = _entries.Count;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var entries = await db.PlaylistEntries.Where(e => e.ChannelId == _channel.Id).OrderBy(e => e.Position).ToListAsync();
+        var entry = new PlaylistEntry { ChannelId = _channel.Id, AssetId = asset.Id };
+        entries.Insert(Math.Min(insertAt, entries.Count), entry);
+        db.PlaylistEntries.Add(entry);
+        Renumber(entries);
+        await db.SaveChangesAsync();
+        _selected = entry.Id;
+        await AfterChangeAsync($"« {asset.Title} » ajouté.");
+    }
+
+    private async Task MoveAsync(int index, int delta)
+    {
+        if (_channel is null) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var entries = await db.PlaylistEntries.Where(e => e.ChannelId == _channel.Id).OrderBy(e => e.Position).ToListAsync();
+        var target = index + delta;
+        if (index < 0 || target < 0 || index >= entries.Count || target >= entries.Count) return;
+        (entries[index], entries[target]) = (entries[target], entries[index]);
+        Renumber(entries);
+        await db.SaveChangesAsync();
+        await AfterChangeAsync(null);
+    }
+
+    private async Task RemoveAsync(PlaylistEntry entry)
+    {
+        if (_channel is null) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var entries = await db.PlaylistEntries.Where(e => e.ChannelId == _channel.Id).OrderBy(e => e.Position).ToListAsync();
+        var target = entries.FirstOrDefault(e => e.Id == entry.Id);
+        if (target is null) return;
+        entries.Remove(target);
+        db.PlaylistEntries.Remove(target);
+        Renumber(entries);
+        await db.SaveChangesAsync();
+        if (_selected == entry.Id) _selected = null;
+        await AfterChangeAsync($"« {entry.DisplayTitle} » retiré.");
+    }
+
+    private void Edit(PlaylistEntry e) => _edit = new EditModel
+    {
+        Id = e.Id,
+        Title = e.TitleOverride,
+        Mode = e.StartMode,
+        FixedStart = (e.FixedStart ?? DateTimeOffset.Now.AddMinutes(10)).ToLocalTime().DateTime,
+        In = e.InPoint is { } i && i > TimeSpan.Zero ? Fmt.Timecode(i) : "",
+        Out = e.OutPoint is { } o && o > TimeSpan.Zero ? Fmt.Timecode(o) : "",
+    };
+
+    private async Task SaveEditAsync()
+    {
+        if (_edit is null) return;
+        if (!Fmt.TryParseTime(_edit.In, out var inPoint) || !Fmt.TryParseTime(_edit.Out, out var outPoint))
+        {
+            (_message, _messageOk) = ("Points d'entrée / sortie : utilisez le format h:mm:ss (ex. 0:01:30).", false);
+            return;
+        }
+        if (outPoint > TimeSpan.Zero && outPoint <= inPoint)
+        {
+            (_message, _messageOk) = ("Le point de sortie doit être après le point d'entrée.", false);
+            return;
+        }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var entry = await db.PlaylistEntries.FindAsync(_edit.Id);
+        if (entry is null) return;
+        entry.TitleOverride = string.IsNullOrWhiteSpace(_edit.Title) ? null : _edit.Title.Trim();
+        entry.StartMode = _edit.Mode;
+        entry.FixedStart = _edit.Mode == StartMode.HeureFixe && _edit.FixedStart is { } local
+            ? new DateTimeOffset(local, TimeZoneInfo.Local.GetUtcOffset(local))
+            : null;
+        entry.InPoint = inPoint > TimeSpan.Zero ? inPoint : null;
+        entry.OutPoint = outPoint > TimeSpan.Zero ? outPoint : null;
+        await db.SaveChangesAsync();
+        _edit = null;
+        await AfterChangeAsync("Élément modifié.");
+    }
+
+    private async Task ToggleLoopAsync(ChangeEventArgs e)
+    {
+        if (_channel is null) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var channel = await db.Channels.FindAsync(_channel.Id);
+        if (channel is null) return;
+        channel.Loop = e.Value is true;
+        await db.SaveChangesAsync();
+        _channel.Loop = channel.Loop;
+        await AfterChangeAsync(channel.Loop ? "Conducteur en boucle." : "Boucle désactivée.");
+    }
+
+    private static void Renumber(List<PlaylistEntry> entries)
+    {
+        for (var i = 0; i < entries.Count; i++) entries[i].Position = i;
+    }
+
+    private async Task AfterChangeAsync(string? message)
+    {
+        await LoadEntriesAsync();
+        if (message is not null) (_message, _messageOk) = ($"{message} Envoyé à l'antenne.", true);
+    }
+
+    public void Dispose() => Monitor.Updated -= OnMonitor;
+}

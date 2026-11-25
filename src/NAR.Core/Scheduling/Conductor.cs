@@ -30,8 +30,8 @@ public readonly record struct ConductorDecision(
 /// </summary>
 public sealed class Conductor
 {
-    private readonly IReadOnlyList<ScheduledItem> _items;
-    private readonly bool _loop;
+    private IReadOnlyList<ScheduledItem> _items;
+    private bool _loop;
     private readonly long _preloadFrames;
 
     private bool _started;
@@ -48,6 +48,7 @@ public sealed class Conductor
         _preloadFrames = Math.Max(1, preloadFrames);
     }
 
+    public IReadOnlyList<ScheduledItem> Items => _items;
     public int CurrentIndex => _inFallback ? -1 : _current;
     public bool InFallback => _inFallback;
     public int Cycle => _cycle;
@@ -128,6 +129,57 @@ public sealed class Conductor
         if (!due) return -1;
         _preloaded = next;
         return next;
+    }
+
+    /// <summary>
+    /// Remplace le conducteur à chaud (modification depuis la régie) sans couper l'antenne :
+    /// <list type="bullet">
+    /// <item>l'élément en cours est retrouvé par son identifiant et continue ;</item>
+    /// <item>s'il a été retiré, il va quand même jusqu'au bout, puis on reprend là où la nouvelle
+    /// grille dit d'être ;</item>
+    /// <item>en secours, on se repositionne immédiatement (un élément peut devenir « en cours »).</item>
+    /// </list>
+    /// </summary>
+    public void Reload(IReadOnlyList<ScheduledItem> items, bool loop)
+    {
+        var currentId = !_inFallback && _current >= 0 && _current < _items.Count ? _items[_current].Id : null;
+        _items = items;
+        _loop = loop;
+        _preloaded = -1;
+        if (!_started) return;
+
+        if (_inFallback)
+        {
+            // Le prochain Tick refait le positionnement complet (Begin).
+            _started = false;
+            _inFallback = false;
+            _current = -1;
+            return;
+        }
+
+        var idx = -1;
+        for (var i = 0; i < items.Count; i++)
+        {
+            if (items[i].Id == currentId) { idx = i; break; }
+        }
+        _current = idx >= 0 ? idx : PositionAt(_currentEndFrame) - 1;
+    }
+
+    /// <summary>
+    /// Indice de l'élément qui est (ou sera ensuite) à l'antenne à l'image donnée, d'après la grille.
+    /// Retourne <c>Count</c> si tout est passé.
+    /// </summary>
+    private int PositionAt(long frame)
+    {
+        long? cursor = null;
+        for (var i = 0; i < _items.Count; i++)
+        {
+            var start = _items[i].FixedStartFrame ?? cursor ?? frame;
+            var end = start + _items[i].DurationFrames;
+            if (start > frame || frame < end) return i;
+            cursor = end;
+        }
+        return _loop ? 0 : _items.Count;
     }
 
     /// <summary>

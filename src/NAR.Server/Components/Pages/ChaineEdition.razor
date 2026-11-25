@@ -1,0 +1,197 @@
+@page "/chaines/nouvelle"
+@page "/chaines/{Id:int}"
+@rendermode InteractiveServer
+@inject IDbContextFactory<NarDbContext> DbFactory
+@inject EngineSupervisor Supervisor
+@inject NavigationManager Nav
+
+<PageTitle>@(_isNew ? "Nouvelle chaîne" : _channel?.Name) — NounoursAutoRegie</PageTitle>
+
+@if (_channel is null)
+{
+    <p class="muted">Chargement…</p>
+}
+else
+{
+    <div class="row" style="margin-bottom:16px">
+        <div class="grow">
+            <h1>@(_isNew ? "Nouvelle chaîne" : _channel.Name)</h1>
+            <p class="lead" style="margin:0">Changer le format ou l'encodage relance le moteur de la chaîne (quelques secondes de coupure). Le conducteur, lui, se modifie sans coupure.</p>
+        </div>
+        <a class="btn" href="/chaines">Retour</a>
+    </div>
+
+    @if (_error is not null) { <div class="alert error">@_error</div> }
+    @if (_saved) { <div class="alert ok">Chaîne enregistrée.</div> }
+
+    <div class="panel">
+        <h2 style="margin-top:0">Identité</h2>
+        <div class="form-grid">
+            <label class="field"><span>Nom</span><input @bind="_channel.Name" maxlength="80" /></label>
+            <label class="field"><span>Numéro</span><input type="number" min="1" @bind="_channel.Number" /></label>
+            <label class="check" style="align-self:end"><input type="checkbox" @bind="_channel.Enabled" /> Antenne allumée</label>
+        </div>
+
+        <h2>Format d'antenne</h2>
+        <div class="form-grid">
+            <label class="field">
+                <span>Préréglage</span>
+                <select value="@PresetKey" @onchange="ApplyPreset">
+                    <option value="">Personnalisé</option>
+                    @foreach (var p in Presets)
+                    {
+                        <option value="@p.Key">@p.Label</option>
+                    }
+                </select>
+            </label>
+            <label class="field"><span>Largeur</span><input type="number" step="2" @bind="_channel.Width" /></label>
+            <label class="field"><span>Hauteur</span><input type="number" step="2" @bind="_channel.Height" /></label>
+            <label class="field"><span>Images / s</span>
+                <select @bind="_channel.FrameRate">
+                    @foreach (var r in new[] { "25", "50", "30000/1001", "60000/1001", "24", "30", "60" })
+                    {
+                        <option value="@r">@RateLabel(r)</option>
+                    }
+                </select>
+            </label>
+        </div>
+
+        <h2>Encodage</h2>
+        <div class="form-grid">
+            <label class="field"><span>Encodeur vidéo</span>
+                <select @bind="_channel.VideoEncoder">
+                    <option value="libx264">H.264 processeur (libx264)</option>
+                    <option value="h264_nvenc">H.264 NVIDIA (NVENC)</option>
+                    <option value="h264_qsv">H.264 Intel (Quick Sync)</option>
+                    <option value="h264_vaapi">H.264 VA-API (Linux)</option>
+                    <option value="h264_amf">H.264 AMD (AMF)</option>
+                    <option value="libx265">HEVC processeur (libx265)</option>
+                    <option value="hevc_nvenc">HEVC NVIDIA (NVENC) — 4K</option>
+                </select>
+            </label>
+            <label class="field"><span>Preset</span><input @bind="_channel.EncoderPreset" placeholder="veryfast (x264), p4 (NVENC)…" /></label>
+            <label class="field"><span>Débit vidéo (kb/s)</span><input type="number" step="500" @bind="_channel.VideoBitrateKbps" /></label>
+            <label class="field"><span>Débit audio (kb/s)</span><input type="number" step="32" @bind="_channel.AudioBitrateKbps" /></label>
+            <label class="field"><span>Durée des segments HLS (s)</span><input type="number" min="1" max="10" @bind="_channel.SegmentSeconds" /></label>
+        </div>
+        @if (_channel.Width >= 3840 && _channel.VideoEncoder.StartsWith("lib"))
+        {
+            <div class="alert warn" style="margin-top:12px">La 4K encodée au processeur est très lourde : préférez un encodeur matériel (NVENC) sur une machine équipée.</div>
+        }
+
+        <h2>Antenne</h2>
+        <div class="form-grid">
+            <label class="field"><span>Bouche-trou (si rien n'est prévu)</span>
+                <select @bind="_channel.FillerAssetId">
+                    <option value="">Mire (aucun bouche-trou)</option>
+                    @foreach (var a in _fillers)
+                    {
+                        <option value="@a.Id">@a.Title (@Fmt.Kind(a.Kind))</option>
+                    }
+                </select>
+            </label>
+            <label class="field"><span>Préchargement (s)</span><input type="number" min="2" max="60" @bind="_channel.PreloadSeconds" /></label>
+            <label class="field"><span>Port local du moteur (0 = auto)</span><input type="number" @bind="_channel.EnginePort" /></label>
+            <label class="check" style="align-self:end"><input type="checkbox" @bind="_channel.Loop" /> Conducteur en boucle</label>
+        </div>
+
+        <div class="row" style="margin-top:20px">
+            <button class="btn primary" @onclick="SaveAsync">Enregistrer</button>
+            @if (!_isNew)
+            {
+                <a class="btn" href="/conducteur/@_channel.Id">Ouvrir le conducteur</a>
+                <span class="grow"></span>
+                <button class="btn danger" @onclick="DeleteAsync">@(_confirmDelete ? "Confirmer la suppression" : "Supprimer la chaîne")</button>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public int? Id { get; set; }
+    private bool _isNew => Id is null;
+    private Channel? _channel;
+    private List<MediaAsset> _fillers = new();
+    private string? _error;
+    private bool _saved, _confirmDelete;
+
+    private sealed record Preset(string Key, string Label, int W, int H, string Rate, int Kbps, string Encoder);
+    private static readonly Preset[] Presets =
+    [
+        new("720p25", "720p25 — 1280×720, 25 i/s", 1280, 720, "25", 3500, "libx264"),
+        new("1080p25", "1080p25 — 1920×1080, 25 i/s", 1920, 1080, "25", 6000, "libx264"),
+        new("1080p50", "1080p50 — 1920×1080, 50 i/s", 1920, 1080, "50", 9000, "libx264"),
+        new("2160p25", "4K — 3840×2160, 25 i/s (GPU)", 3840, 2160, "25", 20000, "hevc_nvenc"),
+    ];
+
+    private string PresetKey => Presets.FirstOrDefault(p => _channel is not null && p.W == _channel.Width && p.H == _channel.Height && p.Rate == _channel.FrameRate)?.Key ?? "";
+
+    private static string RateLabel(string r) => r switch
+    {
+        "30000/1001" => "29,97",
+        "60000/1001" => "59,94",
+        _ => r,
+    };
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _fillers = await db.MediaAssets.AsNoTracking()
+            .Where(a => a.Status == AssetStatus.Pret)
+            .OrderBy(a => a.Kind != AssetKind.BoucheTrou).ThenBy(a => a.Title)
+            .ToListAsync();
+        if (_isNew)
+        {
+            var next = (await db.Channels.MaxAsync(c => (int?)c.Number) ?? 0) + 1;
+            _channel = new Channel { Name = $"Chaîne {next}", Number = next, Enabled = false };
+        }
+        else
+        {
+            _channel = await db.Channels.AsNoTracking().FirstOrDefaultAsync(c => c.Id == Id);
+            if (_channel is null) Nav.NavigateTo("/chaines");
+        }
+    }
+
+    private void ApplyPreset(ChangeEventArgs e)
+    {
+        var p = Presets.FirstOrDefault(x => x.Key == e.Value?.ToString());
+        if (p is null || _channel is null) return;
+        (_channel.Width, _channel.Height, _channel.FrameRate, _channel.VideoBitrateKbps) = (p.W, p.H, p.Rate, p.Kbps);
+        if (p.Encoder != "libx264") (_channel.VideoEncoder, _channel.EncoderPreset) = (p.Encoder, "p4");
+    }
+
+    private async Task SaveAsync()
+    {
+        _error = null;
+        _saved = false;
+        if (_channel is null) return;
+        if (string.IsNullOrWhiteSpace(_channel.Name)) { _error = "Donnez un nom à la chaîne."; return; }
+        if (_channel.Width % 2 != 0 || _channel.Height % 2 != 0 || _channel.Width < 160 || _channel.Height < 90)
+        {
+            _error = "La résolution doit être paire et d'au moins 160×90.";
+            return;
+        }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        if (_isNew) db.Channels.Add(_channel);
+        else db.Channels.Update(_channel);
+        await db.SaveChangesAsync();
+        Supervisor.Wake();
+        if (_isNew) Nav.NavigateTo($"/chaines/{_channel.Id}");
+        _saved = true;
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (!_confirmDelete) { _confirmDelete = true; return; }
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.Channels.FindAsync(Id);
+        if (entity is not null)
+        {
+            db.Channels.Remove(entity);
+            await db.SaveChangesAsync();
+        }
+        Supervisor.Wake();
+        Nav.NavigateTo("/chaines");
+    }
+}

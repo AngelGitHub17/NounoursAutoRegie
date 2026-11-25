@@ -1,15 +1,13 @@
-# Une chaîne = un conteneur moteur. Dupliquez le service pour ajouter des chaînes
-# (un channel.json et un port par chaîne).
+# Régie NounoursAutoRegie : elle lance elle-même un moteur par chaîne allumée.
 services:
-  nar-nounourstv:
+  nounoursautoregie:
     build:
       context: ..
-      dockerfile: docker/Dockerfile.engine
-    container_name: nar-nounourstv
+      dockerfile: docker/Dockerfile
+    container_name: nounoursautoregie
     restart: unless-stopped
     ports:
       - "8090:8090"
     volumes:
-      - ./config/nounourstv:/config      # channel.json (chemins : /media/..., hls.directory : /data/hls)
-      - /srv/media:/media:ro             # médiathèque (lecture seule)
-      - ./data/nounourstv:/data          # sortie HLS + journal de diffusion
+      - ./data:/data              # base, vignettes, HLS, journaux de diffusion
+      - /srv/media:/media:ro      # médiathèque (lecture seule) : ajoutez /media dans la régie

@@ -1,0 +1,46 @@
+@page "/connexion"
+@attribute [AllowAnonymous]
+@layout Layout.BareLayout
+@inject Accounts Accounts
+@inject NavigationManager Nav
+
+<PageTitle>Connexion — NounoursAutoRegie</PageTitle>
+
+<form method="post" @formname="connexion" @onsubmit="LoginAsync" class="panel">
+    <AntiforgeryToken />
+    <h1><span class="onair">ANTENNE</span> NounoursAutoRegie</h1>
+    <p class="muted" style="margin:0">Connectez-vous à la régie.</p>
+    @if (_error is not null)
+    {
+        <div class="alert error">@_error</div>
+    }
+    <label class="field"><span>Identifiant</span><input name="Form.UserName" value="@Form.UserName" autocomplete="username" autofocus required /></label>
+    <label class="field"><span>Mot de passe</span><input name="Form.Password" type="password" autocomplete="current-password" required /></label>
+    <button class="btn primary" type="submit">Se connecter</button>
+</form>
+
+@code {
+    [CascadingParameter] private HttpContext HttpContext { get; set; } = default!;
+    [SupplyParameterFromForm] private LoginForm Form { get; set; } = new();
+    [SupplyParameterFromQuery(Name = "retour")] private string? ReturnUrl { get; set; }
+    private string? _error;
+
+    private async Task LoginAsync()
+    {
+        var user = await Accounts.CheckAsync(Form.UserName ?? "", Form.Password ?? "");
+        if (user is null)
+        {
+            _error = "Identifiant ou mot de passe incorrect.";
+            return;
+        }
+        await Accounts.SignInAsync(HttpContext, user);
+        var target = ReturnUrl is { Length: > 0 } r && r.StartsWith('/') && !r.StartsWith("//") ? r : "/";
+        Nav.NavigateTo(target);
+    }
+
+    private sealed class LoginForm
+    {
+        public string? UserName { get; set; }
+        public string? Password { get; set; }
+    }
+}

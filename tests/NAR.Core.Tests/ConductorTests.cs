@@ -119,4 +119,52 @@ public class ConductorTests
         Assert.Equal(ConductorAction.Start, d.Action);
         Assert.Equal(1, d.ItemIndex);
     }
+
+    private static ScheduledItem Keyed(string id, int index, long duration, long? fixedStart = null) =>
+        new(index, id, id, $"/media/{id}.mp4", 0, duration, fixedStart);
+
+    [Fact]
+    public void Rechargement_garde_l_element_en_cours_et_prend_la_nouvelle_suite()
+    {
+        var items = new[] { Keyed("A", 0, 100), Keyed("B", 1, 100) };
+        var conductor = new Conductor(items, loop: false, preloadFrames: 10);
+        conductor.Tick(0, currentEnded: true);              // A démarre
+        for (long f = 1; f < 40; f++) conductor.Tick(f, false);
+
+        // La régie insère C entre A et B.
+        conductor.Reload([Keyed("A", 0, 100), Keyed("C", 1, 50), Keyed("B", 2, 100)], loop: false);
+        Assert.Equal(0, conductor.CurrentIndex);
+        Assert.Equal(1, conductor.NextIndex);
+
+        ConductorDecision d = default;
+        for (long f = 40; f <= 100; f++) d = conductor.Tick(f, currentEnded: f >= 100);
+        Assert.Equal(ConductorAction.Start, d.Action);
+        Assert.Equal("C", conductor.Items[d.ItemIndex].Id);
+    }
+
+    [Fact]
+    public void Rechargement_element_en_cours_retire_reprend_selon_la_grille()
+    {
+        var conductor = new Conductor([Keyed("A", 0, 100), Keyed("B", 1, 100)], loop: false, preloadFrames: 10);
+        conductor.Tick(0, currentEnded: true);
+        // A est retiré : on termine A puis on enchaîne sur B.
+        conductor.Reload([Keyed("B", 0, 100)], loop: false);
+        Assert.Equal(0, conductor.NextIndex);
+    }
+
+    [Fact]
+    public void Rechargement_en_secours_demarre_un_element_deja_en_cours()
+    {
+        var conductor = new Conductor([Keyed("A", 0, 50)], loop: false, preloadFrames: 10);
+        conductor.Tick(0, currentEnded: true);
+        for (long f = 1; f < 50; f++) conductor.Tick(f, false);
+        Assert.Equal(ConductorAction.Fallback, conductor.Tick(50, currentEnded: true).Action);
+
+        // On ajoute un programme calé à l'image 40 (déjà commencé) : il est pris en cours de route.
+        conductor.Reload([Keyed("A", 0, 50, fixedStart: 0), Keyed("D", 1, 100, fixedStart: 40)], loop: false);
+        var d = conductor.Tick(60, currentEnded: true);
+        Assert.Equal(ConductorAction.Start, d.Action);
+        Assert.Equal("D", conductor.Items[d.ItemIndex].Id);
+        Assert.Equal(20, d.OffsetFrames);
+    }
 }

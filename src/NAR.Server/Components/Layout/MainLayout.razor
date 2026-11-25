@@ -1,0 +1,26 @@
+@inherits LayoutComponentBase
+
+<div class="shell">
+    <nav class="sidebar">
+        <div class="brand"><span class="dot"></span><div>NounoursAutoRegie<small>Régie d'antenne</small></div></div>
+        <NavLink class="nav-link" href="/" Match="NavLinkMatch.All">Antenne</NavLink>
+        <NavLink class="nav-link" href="/conducteur">Conducteurs</NavLink>
+        <NavLink class="nav-link" href="/mediatheque">Médiathèque</NavLink>
+        <NavLink class="nav-link" href="/chaines">Chaînes</NavLink>
+        <AuthorizeView Roles="@Roles.Admin">
+            <NavLink class="nav-link" href="/comptes">Comptes</NavLink>
+        </AuthorizeView>
+        <div class="spacer"></div>
+        <AuthorizeView>
+            <div class="user">
+                <div>@context.User.FindFirst("display_name")?.Value</div>
+                <div class="small">@context.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value</div>
+                <form method="post" action="/deconnexion" style="margin-top:8px">
+                    <AntiforgeryToken />
+                    <button class="btn sm" type="submit">Se déconnecter</button>
+                </form>
+            </div>
+        </AuthorizeView>
+    </nav>
+    <main class="main">@Body</main>
+</div>

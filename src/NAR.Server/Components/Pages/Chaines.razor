@@ -1,0 +1,58 @@
+@page "/chaines"
+@rendermode InteractiveServer
+@inject IDbContextFactory<NarDbContext> DbFactory
+@inject EngineSupervisor Supervisor
+@inject EngineConfigBuilder Builder
+
+<PageTitle>Chaînes — NounoursAutoRegie</PageTitle>
+
+<div class="row" style="margin-bottom:16px">
+    <div class="grow">
+        <h1>Chaînes</h1>
+        <p class="lead" style="margin:0">Format d'antenne, encodage et bouche-trou de chaque chaîne.</p>
+    </div>
+    <a class="btn primary" href="/chaines/nouvelle">+ Nouvelle chaîne</a>
+</div>
+
+@if (_channels is null)
+{
+    <p class="muted">Chargement…</p>
+}
+else
+{
+    <div class="table-wrap">
+        <table class="grid">
+            <thead>
+                <tr><th>N°</th><th>Nom</th><th>Format</th><th>Encodage</th><th>Conducteur</th><th>Bouche-trou</th><th>Moteur</th><th>Antenne</th><th></th></tr>
+            </thead>
+            <tbody>
+                @foreach (var c in _channels)
+                {
+                    var engine = Supervisor.Get(c.Id);
+                    <tr>
+                        <td class="num">@c.Number</td>
+                        <td><a href="/chaines/@c.Id">@c.Name</a></td>
+                        <td>@Fmt.Format(c)</td>
+                        <td class="small">@c.VideoEncoder · @(c.VideoBitrateKbps / 1000.0) Mb/s</td>
+                        <td><a href="/conducteur/@c.Id">@c.Entries.Count élément(s)</a>@(c.Loop ? " · boucle" : "")</td>
+                        <td class="small">@(c.FillerAsset?.Title ?? "Mire")</td>
+                        <td class="small mono">port @Builder.EnginePort(c)@(engine?.Pid is { } pid ? $" · pid {pid}" : "")</td>
+                        <td>@(c.Enabled ? new MarkupString("<span class=\"badge ok\">Allumée</span>") : new MarkupString("<span class=\"badge off\">Éteinte</span>"))</td>
+                        <td><a class="btn sm" href="/chaines/@c.Id">Modifier</a></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private List<Channel>? _channels;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _channels = await db.Channels.AsNoTracking().Include(c => c.FillerAsset).Include(c => c.Entries)
+            .OrderBy(c => c.Number).ThenBy(c => c.Name).ToListAsync();
+    }
+}

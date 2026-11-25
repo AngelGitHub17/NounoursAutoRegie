@@ -3,11 +3,14 @@
 # Les binaires sont autonomes (runtime .NET inclus) : aucun SDK n'est nécessaire dans le conteneur.
 #
 #   nar-deploy check     → code 0 si une mise à jour existe, 2 si déjà à jour
-#   nar-deploy install   → télécharge et installe la dernière release
+#   nar-deploy install   → télécharge et installe la dernière release (+ met à jour le service)
+#   nar-deploy service   → (ré)écrit le service systemd de la régie
 set -euo pipefail
 
 REPO="AngelGitHub17/NounoursAutoRegie"
 NAR_HOME="${NAR_HOME:-/opt/nounoursautoregie}"
+NAR_DATA="${NAR_DATA:-/var/lib/nounoursautoregie}"
+NAR_PORT="${NAR_PORT:-8090}"
 ASSET="nounoursautoregie-linux-x64.tar.gz"
 
 latest_json() {
@@ -17,6 +20,41 @@ latest_json() {
 latest_tag() { latest_json | grep -m1 '"tag_name"' | cut -d'"' -f4; }
 
 current_tag() { cat "${NAR_HOME}/version" 2>/dev/null || echo "aucune"; }
+
+# Service systemd : depuis la v0.2, c'est la régie (NAR.Server) qui tourne ; elle lance
+# et surveille elle-même un moteur par chaîne allumée.
+write_service() {
+  [[ -d /etc/systemd/system ]] || return 0
+  id nar >/dev/null 2>&1 || useradd --system --home-dir "$NAR_DATA" --shell /usr/sbin/nologin nar
+  mkdir -p "$NAR_DATA"
+  chown -R nar:nar "$NAR_DATA"
+  cat <<EOF >/etc/systemd/system/nounoursautoregie.service
+[Unit]
+Description=NounoursAutoRegie - régie d'antenne
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nar
+Group=nar
+WorkingDirectory=$NAR_DATA
+Environment=Nar__DataDirectory=$NAR_DATA
+Environment=Nar__HttpPort=$NAR_PORT
+Environment=TMPDIR=$NAR_DATA
+Environment=DOTNET_CLI_TELEMETRY_OPTOUT=1
+ExecStart=$NAR_HOME/app/NAR.Server
+Restart=always
+RestartSec=3
+KillMode=mixed
+TimeoutStopSec=20
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload 2>/dev/null || true
+}
 
 case "${1:-install}" in
 check)
@@ -45,11 +83,17 @@ install)
   [[ -d "${NAR_HOME}/app" ]] && mv "${NAR_HOME}/app" "${NAR_HOME}/app.old"
   mv "$WORK/nounoursautoregie-linux-x64" "${NAR_HOME}/app"
   chmod +x "${NAR_HOME}/app/NAR.Engine" "${NAR_HOME}"/app/scripts/*.sh
+  [[ -x "${NAR_HOME}/app/NAR.Server" ]] && chmod +x "${NAR_HOME}/app/NAR.Server"
   echo "$TAG" >"${NAR_HOME}/version"
+  [[ -x "${NAR_HOME}/app/NAR.Server" ]] && write_service
   echo "NounoursAutoRegie ${TAG} installé dans ${NAR_HOME}/app"
   ;;
+service)
+  write_service
+  echo "Service nounoursautoregie écrit"
+  ;;
 *)
-  echo "Usage : nar-deploy [check|install]" >&2
+  echo "Usage : nar-deploy [check|install|service]" >&2
   exit 1
   ;;
 esac

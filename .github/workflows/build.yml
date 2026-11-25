@@ -40,8 +40,11 @@ jobs:
         run: |
           for RID in linux-x64 win-x64; do
             OUT="dist/nounoursautoregie-$RID"
-            dotnet publish src/NAR.Engine/NAR.Engine.csproj -c Release -r "$RID" --self-contained true \
-              -p:Version="$VERSION" -p:InformationalVersion="$VERSION+${GITHUB_SHA::7}" -o "$OUT"
+            # Serveur (régie) et moteur publiés dans le même dossier : un seul runtime .NET embarqué.
+            for PROJ in NAR.Server NAR.Engine; do
+              dotnet publish "src/$PROJ/$PROJ.csproj" -c Release -r "$RID" --self-contained true \
+                -p:Version="$VERSION" -p:InformationalVersion="$VERSION+${GITHUB_SHA::7}" -o "$OUT"
+            done
             mkdir -p "$OUT/scripts" "$OUT/samples"
             cp scripts/* "$OUT/scripts/"
             cp samples/*.json "$OUT/samples/"

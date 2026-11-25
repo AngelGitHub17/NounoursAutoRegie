@@ -1,0 +1,285 @@
+@page "/mediatheque"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject IDbContextFactory<NarDbContext> DbFactory
+@inject MediaLibrary Library
+
+<PageTitle>Médiathèque — NounoursAutoRegie</PageTitle>
+
+<h1>Médiathèque</h1>
+<p class="lead">Chaque média est analysé une fois pour toutes : durée, format, volume (correction automatique vers −23 LUFS) et vignette.</p>
+
+@if (_message is not null) { <div class="alert @(_messageOk ? "ok" : "error")">@_message</div> }
+
+<h2>Dossiers surveillés</h2>
+<div class="panel">
+    @if (_folders.Count == 0)
+    {
+        <p class="muted" style="margin-top:0">Aucun dossier. Ajoutez le chemin d'un dossier de vidéos tel qu'il est vu par le serveur (ex. <span class="mono">/media/films</span> ou <span class="mono">D:\Vidéos</span>).</p>
+    }
+    else
+    {
+        <table class="grid" style="margin-bottom:14px">
+            <thead><tr><th>Chemin</th><th>Type par défaut</th><th>Fichiers</th><th>Dernier parcours</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var f in _folders)
+                {
+                    <tr>
+                        <td class="mono small">@f.Path @(f.Recursive ? "" : "(sans sous-dossiers)")</td>
+                        <td>@Fmt.Kind(f.DefaultKind)</td>
+                        <td class="num">@f.LastScanCount</td>
+                        <td class="small">@(f.LastScanAt is { } at ? at.ToLocalTime().ToString("dd/MM HH:mm") : "—")</td>
+                        <td>
+                            <div class="row">
+                                <button class="btn sm" disabled="@_busy" @onclick="() => ScanAsync(f.Id)">Parcourir</button>
+                                <button class="btn sm danger" @onclick="() => RemoveFolderAsync(f.Id)">Retirer</button>
+                            </div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+    <div class="row">
+        <input class="grow" placeholder="Chemin du dossier" @bind="_newPath" />
+        <select @bind="_newKind">
+            @foreach (var k in Enum.GetValues<AssetKind>())
+            {
+                <option value="@k">@Fmt.Kind(k)</option>
+            }
+        </select>
+        <label class="check"><input type="checkbox" @bind="_newRecursive" /> Sous-dossiers</label>
+        <button class="btn primary" disabled="@_busy" @onclick="AddFolderAsync">Ajouter</button>
+    </div>
+</div>
+
+<h2>Médias <span class="muted" style="text-transform:none">(@_total)</span></h2>
+<div class="row" style="margin-bottom:10px">
+    <input class="grow" placeholder="Rechercher un titre ou un fichier…" @bind="Search" @bind:event="oninput" @bind:after="ReloadAsync" />
+    <select @bind="KindFilter" @bind:after="ReloadAsync">
+        <option value="">Tous les types</option>
+        @foreach (var k in Enum.GetValues<AssetKind>())
+        {
+            <option value="@k">@Fmt.Kind(k)</option>
+        }
+    </select>
+    <select @bind="StatusFilter" @bind:after="ReloadAsync">
+        <option value="">Tous les états</option>
+        @foreach (var s in Enum.GetValues<AssetStatus>())
+        {
+            <option value="@s">@Fmt.Status(s).Label</option>
+        }
+    </select>
+</div>
+
+<div class="table-wrap">
+    <table class="grid">
+        <thead><tr><th></th><th>Titre</th><th>Type</th><th>Durée</th><th>Format</th><th>Volume</th><th>État</th><th></th></tr></thead>
+        <tbody>
+            @foreach (var a in _assets)
+            {
+                var (label, css) = Fmt.Status(a.Status);
+                <tr @key="a.Id">
+                    <td>
+                        @if (a.HasThumbnail)
+                        {
+                            <img class="thumb" src="/medias/@a.Id/vignette.jpg?v=@a.AnalyzedAt?.ToUnixTimeSeconds()" loading="lazy" alt="" />
+                        }
+                        else
+                        {
+                            <div class="thumb"></div>
+                        }
+                    </td>
+                    <td>
+                        @if (_editing == a.Id)
+                        {
+                            <input style="width:100%" @bind="a.Title" />
+                        }
+                        else
+                        {
+                            <div>@a.Title</div>
+                            <div class="small muted mono" title="@a.Path">@a.FileName</div>
+                        }
+                        @if (a.Error is not null && a.Status != AssetStatus.Pret)
+                        {
+                            <div class="small" style="color:var(--live)">@a.Error</div>
+                        }
+                    </td>
+                    <td>
+                        @if (_editing == a.Id)
+                        {
+                            <select @bind="a.Kind">
+                                @foreach (var k in Enum.GetValues<AssetKind>())
+                                {
+                                    <option value="@k">@Fmt.Kind(k)</option>
+                                }
+                            </select>
+                        }
+                        else
+                        {
+                            @Fmt.Kind(a.Kind)
+                        }
+                    </td>
+                    <td class="num">@(a.Duration > TimeSpan.Zero ? Fmt.Duration(a.Duration) : "—")</td>
+                    <td class="small">@(a.Width > 0 ? $"{a.Width}×{a.Height} · {a.FrameRate}" : "—")@(a.Status == AssetStatus.Pret && !a.HasAudio ? " · sans son" : "")</td>
+                    <td class="small mono">@(a.LoudnessLufs is { } l ? $"{l:0.0} LUFS → {a.GainDb:+0.0;-0.0;0} dB" : "—")</td>
+                    <td><span class="badge @css">@label</span></td>
+                    <td>
+                        <div class="row">
+                            @if (_editing == a.Id)
+                            {
+                                <button class="btn sm primary" @onclick="() => SaveAssetAsync(a)">OK</button>
+                            }
+                            else
+                            {
+                                <button class="btn sm" @onclick="() => _editing = a.Id">Modifier</button>
+                            }
+                            <button class="btn sm" @onclick="() => Library.ReanalyzeAsync(a.Id)" title="Relancer l'analyse">↻</button>
+                        </div>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+@if (_total > _assets.Count)
+{
+    <div class="row" style="margin-top:10px">
+        <span class="muted">@_assets.Count sur @_total affichés</span>
+        <button class="btn sm" @onclick="MoreAsync">Afficher plus</button>
+    </div>
+}
+
+@code {
+    private List<MediaFolder> _folders = new();
+    private List<MediaAsset> _assets = new();
+    private int _total, _limit = 100;
+    private string _newPath = "";
+    private AssetKind _newKind = AssetKind.Programme;
+    private bool _newRecursive = true, _busy, _messageOk;
+    private string? _message;
+    private int? _editing;
+    private DateTime _lastRefresh;
+
+    private string Search { get; set; } = "";
+    private string KindFilter { get; set; } = "";
+    private string StatusFilter { get; set; } = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadFoldersAsync();
+        await ReloadAsync();
+        Library.Changed += OnLibraryChanged;
+    }
+
+    private void OnLibraryChanged()
+    {
+        if (_editing is not null || (DateTime.UtcNow - _lastRefresh).TotalMilliseconds < 1500) return;
+        _lastRefresh = DateTime.UtcNow;
+        _ = InvokeAsync(async () =>
+        {
+            await LoadFoldersAsync();
+            await ReloadAsync();
+            StateHasChanged();
+        });
+    }
+
+    private async Task LoadFoldersAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _folders = await db.MediaFolders.AsNoTracking().OrderBy(f => f.Path).ToListAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var q = db.MediaAssets.AsNoTracking();
+        if (!string.IsNullOrWhiteSpace(Search))
+        {
+            var s = $"%{Search.Trim()}%";
+            q = q.Where(a => EF.Functions.Like(a.Title, s) || EF.Functions.Like(a.FileName, s));
+        }
+        if (Enum.TryParse<AssetKind>(KindFilter, out var kind)) q = q.Where(a => a.Kind == kind);
+        if (Enum.TryParse<AssetStatus>(StatusFilter, out var status)) q = q.Where(a => a.Status == status);
+        _total = await q.CountAsync();
+        _assets = await q.OrderBy(a => a.Title).Take(_limit).ToListAsync();
+    }
+
+    private async Task MoreAsync()
+    {
+        _limit += 200;
+        await ReloadAsync();
+    }
+
+    private async Task AddFolderAsync()
+    {
+        _message = null;
+        var path = _newPath.Trim();
+        if (path.Length == 0) return;
+        if (!Directory.Exists(path))
+        {
+            (_message, _messageOk) = ($"Le serveur ne trouve pas le dossier « {path} ». Vérifiez le chemin (et, sur Proxmox, le point de montage du conteneur).", false);
+            return;
+        }
+        await using (var db = await DbFactory.CreateDbContextAsync())
+        {
+            var full = Path.GetFullPath(path);
+            if (await db.MediaFolders.AnyAsync(f => f.Path == full))
+            {
+                (_message, _messageOk) = ("Ce dossier est déjà dans la médiathèque.", false);
+                return;
+            }
+            var folder = new MediaFolder { Path = full, DefaultKind = _newKind, Recursive = _newRecursive };
+            db.MediaFolders.Add(folder);
+            await db.SaveChangesAsync();
+            _newPath = "";
+            await ScanAsync(folder.Id);
+        }
+    }
+
+    private async Task ScanAsync(int folderId)
+    {
+        _busy = true;
+        try
+        {
+            var (added, updated, missing) = await Library.ScanFolderAsync(folderId);
+            (_message, _messageOk) = ($"Parcours terminé : {added} nouveau(x), {updated} modifié(s), {missing} absent(s). L'analyse continue en arrière-plan.", true);
+        }
+        catch (Exception ex)
+        {
+            (_message, _messageOk) = ($"Parcours impossible : {ex.Message}", false);
+        }
+        finally
+        {
+            _busy = false;
+        }
+        await LoadFoldersAsync();
+        await ReloadAsync();
+    }
+
+    private async Task RemoveFolderAsync(int folderId)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var folder = await db.MediaFolders.FindAsync(folderId);
+        if (folder is null) return;
+        db.MediaFolders.Remove(folder);
+        await db.SaveChangesAsync();
+        (_message, _messageOk) = ("Dossier retiré. Ses médias restent dans la médiathèque (ils peuvent être utilisés dans des conducteurs).", true);
+        await LoadFoldersAsync();
+    }
+
+    private async Task SaveAssetAsync(MediaAsset a)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.MediaAssets.FindAsync(a.Id);
+        if (entity is not null)
+        {
+            entity.Title = string.IsNullOrWhiteSpace(a.Title) ? entity.Title : a.Title.Trim();
+            entity.Kind = a.Kind;
+            await db.SaveChangesAsync();
+        }
+        _editing = null;
+    }
+
+    public void Dispose() => Library.Changed -= OnLibraryChanged;
+}

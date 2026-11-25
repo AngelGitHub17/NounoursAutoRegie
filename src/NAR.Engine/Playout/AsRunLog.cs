@@ -9,6 +9,10 @@ namespace NAR.Engine.Playout;
 public sealed class AsRunLog(string directory, string channelName, ILogger logger)
 {
     private readonly object _lock = new();
+    private static readonly JsonSerializerOptions Options = new()
+    {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
 
     public void Write(string evt, long frame, string timecode, string? id = null, string? title = null,
         long? framesPlayed = null, string? detail = null)
@@ -24,7 +28,7 @@ public sealed class AsRunLog(string directory, string channelName, ILogger logge
             title,
             framesPlayed,
             detail,
-        });
+        }, Options);
         try
         {
             lock (_lock)

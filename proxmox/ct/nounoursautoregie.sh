@@ -71,6 +71,5 @@ description
 
 msg_ok "Completed successfully!\n"
 echo -e "${CREATING}${GN}${APP} setup has been successfully initialized!${CL}"
-echo -e "${INFO}${YW}Page de contrôle de l'antenne :${CL}"
+echo -e "${INFO}${YW}Régie (créez le compte administrateur à la première visite) :${CL}"
 echo -e "${GATEWAY}${BGN}http://${IP}:8090${CL}"
-echo -e "${INFO}${YW}Configuration de la chaîne : /etc/nounoursautoregie/channel.json${CL}"

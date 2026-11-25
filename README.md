@@ -3,110 +3,115 @@
 **Régie finale de télévision pour NounoursCorp** : programmation, habillage, publicité, direct et diffusion multi-chaînes 24 h/24, sans écran noir.
 Remplaçant de NounoursTelevisionAutomatic, conçu comme un vrai logiciel d'automation broadcast plutôt que comme un générateur de chaînes IPTV.
 
-> **État : phase 0 — preuve de concept du moteur.** Une chaîne, un conducteur en JSON, une sortie HLS et une page de contrôle.
+> **État : phase 1 — régie web, médiathèque et conducteurs en base (v0.2).**
 > Le cahier des charges complet et la feuille de route sont dans le document de conception du projet.
 
-## Ce que fait déjà la phase 0
+## Ce que fait NounoursAutoRegie aujourd'hui
 
-- **Antenne continue** : une horloge maîtresse produit exactement une image et son audio à chaque période (25, 50, 29,97 i/s…). L'encodeur FFmpeg n'est jamais relancé entre deux éléments, donc le flux HLS n'a aucune coupure ni discontinuité.
-- **Enchaînement à l'image près** : l'élément suivant est préchargé (10 s avant par défaut) et démarre à l'image exacte.
-- **Horaires fixes** : un élément avec `startAt` coupe ce qui passe à l'heure pile ; avant son heure, l'antenne passe en secours.
-- **Normalisation à la volée** : résolution, rapport d'image (bandes noires), cadence, désentrelacement, son 48 kHz stéréo. Les médias hétérogènes s'enchaînent sans préparation.
-- **Secours en cascade** : fichier absent ou corrompu → sauté sans perte d'image ; plus rien de prévu → bouche-trou en boucle ; bouche-trou en panne → mire générée en mémoire. Si une source cale, la dernière image est figée, puis la source est abandonnée au bout de 2 s.
-- **Reprise après redémarrage** : au lancement, le moteur retrouve l'élément qui devrait être à l'antenne et le reprend en cours de route.
-- **Encodeur auto-réparé** : s'il plante, il est relancé et la numérotation HLS continue (les lecteurs ne décrochent pas).
-- **Journal de diffusion** (`asrun/<chaîne>-AAAAMMJJ.jsonl`) : chaque début, fin, coupure, passage en secours et erreur, à l'image près.
-- **Page de contrôle** sur `http://<machine>:8090` : lecteur, timecode, élément en cours, temps restant, à suivre, santé (retard d'horloge, images figées, sources en échec).
-- **Encodage matériel** possible sur Windows : `h264_nvenc`, `h264_qsv`, `h264_amf`, et `hevc_nvenc` pour la 4K.
+**La régie (NAR.Server)** — interface web en français, sur PC comme sur téléphone :
+- **Antenne** : mosaïque de toutes les chaînes en direct (lecteur, élément en cours, temps restant, à suivre, santé), allumer / éteindre / redémarrer, journal du moteur.
+- **Conducteurs** : ajouter, insérer, réordonner, retirer des éléments ; horaire fixe (coupe ce qui passe) ou enchaîné ; points d'entrée et de sortie. Heures prévues calculées en direct, alertes de coupure et de bouche-trou. **Chaque modification part à l'antenne en ~2 s, sans coupure.**
+- **Médiathèque** : dossiers surveillés (rescan automatique), analyse de chaque média une fois pour toutes (durée, format, volume EBU R128 → correction vers −23 LUFS, vignette), type deviné d'après le nom (jingle, spot, bande-annonce, épisode…).
+- **Chaînes** : format (720p, 1080p25/50, 4K), encodeur (processeur ou NVENC / Quick Sync / VA-API / AMF), débit, bouche-trou, boucle.
+- **Comptes locaux** (mot de passe haché PBKDF2), création du compte administrateur à la première visite.
+- **Flux publics** sans connexion : `/live/<id>/index.m3u8` (HLS de chaque chaîne) et `/live/chaines.m3u` (liste IPTV pour NounoursTV, Jellyfin…).
+- **Supervision** : un moteur (processus séparé) par chaîne allumée ; s'il plante, il est relancé seul et seule sa chaîne est touchée.
 
-## Démarrage rapide
+**Le moteur (NAR.Engine)** — une chaîne :
+- **Antenne continue** : une horloge maîtresse produit exactement une image et son audio par période (25, 50, 29,97 i/s…). L'encodeur n'est jamais relancé entre deux éléments : le flux HLS n'a aucune coupure.
+- **Enchaînement à l'image près**, élément suivant préchargé, **horaires fixes** à l'image près.
+- **Normalisation à la volée** : résolution, bandes noires, cadence, désentrelacement, son 48 kHz stéréo, gain par média.
+- **Secours en cascade** : fichier absent ou corrompu sauté sans perte d'image → bouche-trou → mire. Image figée si une source cale, abandonnée après 2 s.
+- **Rechargement à chaud** du conducteur ; un changement de format relance proprement le moteur.
+- **Reprise après redémarrage** en cours de route, **encodeur auto-réparé**, **journal de diffusion** à l'image près.
 
-Prérequis : [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) et **FFmpeg 6 ou plus récent** (`ffmpeg` et `ffprobe` dans le PATH, ou chemins dans la configuration).
+## Installation
 
-```bash
-# 1. Médias de test variés (720p30, 1080p25, 4:3 sans son, 50 i/s, bouche-trou)
-scripts/make-test-media.sh                                        # Linux / macOS
-powershell -ExecutionPolicy Bypass -File scripts\make-test-media.ps1   # Windows
+### Proxmox : conteneur LXC en une commande (recommandé)
 
-# 2. Lancer la chaîne de test (640x360, en boucle)
-dotnet run -c Release --project src/NAR.Engine -- "$(pwd)/samples/channel.test.json"
-
-# 3. Ouvrir http://localhost:8090
-```
-
-Pour une vraie chaîne, copiez `samples/channel.example.json` (1080p25, commenté) et adaptez le conducteur.
-
-### Sur le Proxmox : conteneur LXC en une commande (recommandé)
-
-Le script suit le format des [Proxmox VE Helper-Scripts](https://community-scripts.github.io/ProxmoxVE/) : même menu, mêmes réglages (CPU, RAM, disque, réseau). Dans le **shell de l'hôte Proxmox** :
+Le script suit le format des [Proxmox VE Helper-Scripts](https://community-scripts.github.io/ProxmoxVE/). Dans le **shell de l'hôte Proxmox** :
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/AngelGitHub17/NounoursAutoRegie/main/proxmox/ct/nounoursautoregie.sh)"
 ```
 
-Le conteneur (Ubuntu 24.04, 4 cœurs, 4 Go, 20 Go par défaut) installe la dernière release (binaires autonomes, sans SDK .NET), génère des médias de test et démarre une **chaîne de test 1080p25** en service `systemd`. Ensuite :
+Le conteneur (Ubuntu 24.04, 4 cœurs, 4 Go, 20 Go par défaut) installe la dernière release (binaires autonomes, sans SDK .NET), génère des médias de test et démarre la régie. Au premier démarrage, elle crée une médiathèque et une chaîne de démonstration « NAR Test » déjà à l'antenne.
 
 | Quoi | Où |
 | --- | --- |
-| Page de contrôle | `http://<ip-du-conteneur>:8090` |
-| Flux HLS | `http://<ip-du-conteneur>:8090/hls/index.m3u8` |
-| Configuration de la chaîne | `/etc/nounoursautoregie/channel.json` puis `systemctl restart nounoursautoregie` |
-| Médias, HLS, journal de diffusion | `/var/lib/nounoursautoregie/` |
-| Journaux du moteur | `journalctl -u nounoursautoregie -f` |
+| Régie (créer le compte admin à la première visite) | `http://<ip-du-conteneur>:8090` |
+| Flux HLS public d'une chaîne | `http://<ip-du-conteneur>:8090/live/<id>/index.m3u8` |
+| Liste IPTV | `http://<ip-du-conteneur>:8090/live/chaines.m3u` |
+| Données (base, vignettes, HLS, journaux) | `/var/lib/nounoursautoregie/` |
+| Journaux | `journalctl -u nounoursautoregie -f` (et bouton « Journal » de chaque chaîne) |
 | Mise à jour | relancer la commande ci-dessus **dans la console du conteneur** (ou taper `update`) |
 
-Pour utiliser vos vrais médias, montez un dossier de l'hôte dans le conteneur (`pct set <id> -mp0 /chemin/hôte,mp=/media`) et pointez le conducteur dessus.
-
-### Sur le Proxmox : Docker
+**Vos vrais médias** : montez un dossier de l'hôte dans le conteneur, puis ajoutez-le dans la médiathèque.
 
 ```bash
-cd docker
-docker compose up -d --build
+pct set <id> -mp0 /chemin/sur/l-hote,mp=/media     # puis redémarrer le conteneur
 ```
 
-Placez `channel.json` dans `docker/config/nounourstv/`, avec des chemins `/media/...` et `"hls": { "directory": "/data/hls" }`. Une chaîne = un conteneur.
+### Windows
 
-## Organisation du code
+Téléchargez `nounoursautoregie-win-x64.zip` dans les [releases](https://github.com/AngelGitHub17/NounoursAutoRegie/releases), dézippez, installez [FFmpeg](https://www.gyan.dev/ffmpeg/builds/) (dans le PATH, ou chemins dans `appsettings.json`), puis lancez `NAR.Server.exe` et ouvrez `http://localhost:8090`. Les données vont dans le dossier `data` à côté du dossier de l'application.
+
+### Docker
+
+```bash
+cd docker && docker compose up -d --build     # régie sur :8090, données dans docker/data, médias dans /srv/media
+```
+
+### Moteur seul (sans régie)
+
+Le moteur fonctionne aussi tout seul avec un fichier JSON, relu à chaud dès qu'il change :
+
+```bash
+scripts/make-test-media.sh
+dotnet run -c Release --project src/NAR.Engine -- "$(pwd)/samples/channel.test.json"   # page de contrôle sur :8090
+```
+
+## Développement
+
+Prérequis : [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) et **FFmpeg 6+**.
+
+```bash
+dotnet build
+dotnet test
+scripts/make-test-media.sh data/media                              # médias de démonstration
+Nar__DataDirectory="$(pwd)/data" dotnet run --project src/NAR.Server  # régie sur http://localhost:8090 (trouve le moteur compilé)
+```
+
+Nouvelle version : augmenter `<Version>` dans `Directory.Build.props` et pousser sur `main` ; GitHub Actions publie la release (binaires Linux et Windows) que le conteneur Proxmox récupère.
 
 | Projet | Rôle |
 | --- | --- |
-| `src/NAR.Core` | Modèle métier sans dépendance vidéo : cadences exactes (`FrameRate`), format de chaîne, conducteur (`Conductor`), configuration. |
-| `src/NAR.Engine` | Moteur d'une chaîne : horloge maîtresse, décodeurs, encodeur continu, mire, journal de diffusion, page de contrôle. |
-| `tests/NAR.Core.Tests` | Tests de l'enchaînement image par image et des calculs de cadence (audio exact en 29,97 sur 24 h). |
-| `samples/` | Configurations d'exemple et de test. |
-| `scripts/` | Génération de médias de test. |
-| `docker/` | Image du moteur et `docker-compose` pour le Proxmox. |
+| `src/NAR.Core` | Modèle sans dépendance vidéo : cadences exactes, conducteur image par image (`Conductor`), planificateur d'horaires, configuration. |
+| `src/NAR.Engine` | Moteur d'une chaîne : horloge maîtresse, décodeurs, encodeur continu, mire, rechargement à chaud, journal de diffusion. |
+| `src/NAR.Server` | Régie : base SQLite (EF Core), médiathèque et analyse, superviseur des moteurs, API moteur, flux publics, interface Blazor. |
+| `tests/NAR.Core.Tests` | Tests de l'enchaînement, du rechargement à chaud et des cadences. |
+| `proxmox/` | Script LXC (format community-scripts), installation et mises à jour (`nar-deploy`). |
 
-### Comment marche le moteur
+### Comment ça s'assemble
 
 ```
- fichiers ──► SourceDecoder (FFmpeg : décode + normalise)  ─┐
-                    vidéo brute YUV 4:2:0 (stdout)           │  préchargement,
-                    audio PCM 48 kHz (socket locale)         │  file bornée
-                                                             ▼
-             Conductor ◄── PlayoutEngine (horloge maîtresse : 1 image / période)
-             « quoi diffuser »        │  source, bouche-trou, image figée ou mire
-                                      ▼
-                         OutputEncoder (un seul FFmpeg, jamais relancé)
-                                      ▼
-                       HLS (index.m3u8 + segments) ──► NounoursTV, lecteurs
-```
-
-Les horodatages de sortie sont calculés à partir du nombre d'images envoyées, pas à partir des fichiers sources : c'est ce qui garantit un flux sans rupture.
-
-## Tests
-
-```bash
-dotnet test
+ Navigateur ──► NAR.Server (régie, :8090) ── base SQLite, médiathèque, analyse FFmpeg
+                    │   ▲ config + conducteur (révision, interrogé toutes les 2 s)
+        lance et    │   │
+        surveille   ▼   │
+               NAR.Engine (1 processus par chaîne, 127.0.0.1)
+                    fichiers ──► décodeurs FFmpeg ──► horloge maîtresse ──► encodeur unique ──► HLS
+                                                                                     │
+ NounoursTV, IPTV ◄── /live/<id>/index.m3u8 (relayé par la régie) ◄─────────────────┘
 ```
 
 ## Feuille de route
 
 | Phase | Contenu | Porte de validation |
 | --- | --- | --- |
-| **0 — Fondations** *(en cours)* | Solution, modèle, moteur continu, sortie HLS | 24 h sans coupure, charge processeur mesurée |
-| 1 — Une chaîne à l'antenne | Ingest et médiathèque, conducteur en base, NAR.Server, régie web | 7 jours sans intervention |
-| 2 — Programmation et multi-chaînes | Grilles types, programmes types, remplissage, superviseur | NounoursTV bascule d'ErsatzTV |
+| 0 — Fondations ✅ | Moteur continu, sortie HLS, conteneur Proxmox | 24 h sans coupure, charge processeur mesurée |
+| **1 — Une chaîne à l'antenne** *(en cours)* | ✅ Médiathèque et analyse, conducteur en base, NAR.Server, régie web · à venir : EPG XMLTV, journal de diffusion consultable | 7 jours sans intervention |
+| 2 — Programmation et multi-chaînes | Grilles types, programmes types, remplissage | NounoursTV bascule d'ErsatzTV |
 | 3 — Publicité et habillage | Campagnes, écrans pub, moteur graphique HTML, chartes | |
 | 4 — Direct | SRT, RTMP, NDI, prise d'antenne, retour grille | |
 | 5 — Écosystème | NounoursAccount, NounoursBot, régie mobile, API publique | |

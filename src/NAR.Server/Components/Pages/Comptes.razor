@@ -1,0 +1,75 @@
+@page "/comptes"
+@attribute [Authorize(Roles = Roles.Admin)]
+@rendermode InteractiveServer
+@inject IDbContextFactory<NarDbContext> DbFactory
+@inject Accounts Accounts
+
+<PageTitle>Comptes — NounoursAutoRegie</PageTitle>
+
+<h1>Comptes</h1>
+<p class="lead">Comptes locaux de la régie. Les rôles serviront à limiter les actions à partir de la prochaine version ; la connexion NounoursAccount viendra en complément.</p>
+
+@if (_message is not null) { <div class="alert @(_ok ? "ok" : "error")">@_message</div> }
+
+<div class="table-wrap" style="margin-bottom:20px">
+    <table class="grid">
+        <thead><tr><th>Identifiant</th><th>Nom</th><th>Rôle</th><th>Dernière connexion</th></tr></thead>
+        <tbody>
+            @foreach (var u in _users)
+            {
+                <tr>
+                    <td class="mono">@u.UserName</td>
+                    <td>@u.DisplayName</td>
+                    <td>@u.Role</td>
+                    <td class="small">@(u.LastLoginAt?.ToLocalTime().ToString("dd/MM/yyyy HH:mm") ?? "jamais")</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+<div class="panel">
+    <h2 style="margin-top:0">Nouveau compte</h2>
+    <div class="form-grid">
+        <label class="field"><span>Identifiant</span><input @bind="_userName" /></label>
+        <label class="field"><span>Nom affiché</span><input @bind="_displayName" /></label>
+        <label class="field"><span>Mot de passe</span><input type="password" @bind="_password" /></label>
+        <label class="field"><span>Rôle</span>
+            <select @bind="_role">
+                @foreach (var r in Roles.All) { <option value="@r">@r</option> }
+            </select>
+        </label>
+    </div>
+    <button class="btn primary" style="margin-top:14px" @onclick="CreateAsync">Créer</button>
+</div>
+
+@code {
+    private List<AppUser> _users = new();
+    private string _userName = "", _displayName = "", _password = "", _role = Roles.Programmateur;
+    private string? _message;
+    private bool _ok;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _users = await db.Users.AsNoTracking().OrderBy(u => u.UserName).ToListAsync();
+    }
+
+    private async Task CreateAsync()
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(_userName)) throw new ArgumentException("Choisissez un identifiant.");
+            await Accounts.CreateAsync(_userName, _displayName, _password, _role);
+            (_message, _ok) = ($"Compte « {_userName} » créé.", true);
+            _userName = _displayName = _password = "";
+            await LoadAsync();
+        }
+        catch (ArgumentException ex)
+        {
+            (_message, _ok) = (ex.Message, false);
+        }
+    }
+}
