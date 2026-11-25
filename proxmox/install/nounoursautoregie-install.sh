@@ -24,11 +24,29 @@ msg_info "Installing Dependencies (.NET 8, FFmpeg)"
 $STD apt-get install -y git ca-certificates curl ffmpeg dotnet-sdk-8.0
 msg_ok "Installed Dependencies"
 
+# Le SDK .NET crée des verrous nommés (NuGet, MSBuild) dans le dossier temporaire, rangés par
+# session de processus. Lancé via lxc-attach, il n'a ni HOME ni session propre et échoue avec
+# « cannot open the device or file specified : 'NuGet-Migrations' ». Ce lanceur lui donne un
+# environnement complet et une session neuve (setsid). Il sert aussi aux mises à jour.
+cat <<'WRAPPER' >/usr/local/bin/nar-dotnet
+#!/usr/bin/env bash
+export HOME="${HOME:-/root}"
+export DOTNET_CLI_HOME=/opt/nounoursautoregie/.dotnet
+export TMPDIR=/opt/nounoursautoregie/.tmp
+export NUGET_PACKAGES=/opt/nounoursautoregie/.nuget/packages
+export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
+export DOTNET_GENERATE_ASPNET_CERTIFICATE=false MSBUILDDISABLENODEREUSE=1
+mkdir -p "$DOTNET_CLI_HOME" "$TMPDIR" "$NUGET_PACKAGES"
+chmod 1777 "$TMPDIR"
+exec setsid -w dotnet "$@"
+WRAPPER
+chmod +x /usr/local/bin/nar-dotnet
+
 msg_info "Building NounoursAutoRegie"
+chmod 1777 /tmp
 mkdir -p "$NAR_HOME"
 $STD git clone --depth 1 "$NAR_REPO" "$NAR_HOME/src"
-export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
-$STD dotnet publish "$NAR_HOME/src/src/NAR.Engine/NAR.Engine.csproj" -c Release -o "$NAR_HOME/app"
+$STD nar-dotnet publish "$NAR_HOME/src/src/NAR.Engine/NAR.Engine.csproj" -c Release -o "$NAR_HOME/app" -nodeReuse:false
 git -C "$NAR_HOME/src" rev-parse HEAD >"$NAR_HOME/version"
 msg_ok "Built NounoursAutoRegie ($(cut -c1-7 "$NAR_HOME/version"))"
 

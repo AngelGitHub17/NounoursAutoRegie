@@ -56,7 +56,7 @@ function update_script() {
 
   msg_info "Mise à jour de ${APP} (${CURRENT:0:7} → ${LATEST:0:7})"
   $STD git reset --hard origin/main
-  $STD dotnet publish src/NAR.Engine/NAR.Engine.csproj -c Release -o /opt/nounoursautoregie/app
+  $STD nar-dotnet publish src/NAR.Engine/NAR.Engine.csproj -c Release -o /opt/nounoursautoregie/app -nodeReuse:false
   echo "${LATEST}" >/opt/nounoursautoregie/version
   msg_ok "${APP} mis à jour"
 
