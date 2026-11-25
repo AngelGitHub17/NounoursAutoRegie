@@ -44,7 +44,7 @@ Le script suit le format des [Proxmox VE Helper-Scripts](https://community-scrip
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/AngelGitHub17/NounoursAutoRegie/main/proxmox/ct/nounoursautoregie.sh)"
 ```
 
-Le conteneur (Ubuntu 24.04, 4 cœurs, 4 Go, 20 Go par défaut) compile NounoursAutoRegie, génère des médias de test et démarre une **chaîne de test 1080p25** en service `systemd`. Ensuite :
+Le conteneur (Ubuntu 24.04, 4 cœurs, 4 Go, 20 Go par défaut) installe la dernière release (binaires autonomes, sans SDK .NET), génère des médias de test et démarre une **chaîne de test 1080p25** en service `systemd`. Ensuite :
 
 | Quoi | Où |
 | --- | --- |

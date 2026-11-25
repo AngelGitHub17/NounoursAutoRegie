@@ -36,17 +36,17 @@ function update_script() {
   header_info
   check_container_storage
   check_container_resources
-  if [[ ! -d /opt/nounoursautoregie/src/.git ]]; then
+  if [[ ! -x /opt/nounoursautoregie/app/NAR.Engine ]]; then
     msg_error "No ${APP} Installation Found!"
     exit
   fi
 
-  cd /opt/nounoursautoregie/src || exit
-  $STD git fetch --depth 1 origin main
-  CURRENT="$(git rev-parse HEAD)"
-  LATEST="$(git rev-parse origin/main)"
-  if [[ "$CURRENT" == "$LATEST" ]]; then
-    msg_ok "${APP} est déjà à jour (${CURRENT:0:7})"
+  # Le lanceur de mise à jour lui-même peut avoir évolué.
+  curl -fsSL "${COMMUNITY_SCRIPTS_URL}/nar-deploy.sh" -o /usr/local/bin/nar-deploy
+  chmod +x /usr/local/bin/nar-deploy
+
+  if ! nar-deploy check >/dev/null; then
+    msg_ok "${APP} est déjà à jour ($(cat /opt/nounoursautoregie/version))"
     exit
   fi
 
@@ -54,11 +54,9 @@ function update_script() {
   systemctl stop nounoursautoregie
   msg_ok "Antenne arrêtée"
 
-  msg_info "Mise à jour de ${APP} (${CURRENT:0:7} → ${LATEST:0:7})"
-  $STD git reset --hard origin/main
-  $STD nar-dotnet publish src/NAR.Engine/NAR.Engine.csproj -c Release -o /opt/nounoursautoregie/app -nodeReuse:false
-  echo "${LATEST}" >/opt/nounoursautoregie/version
-  msg_ok "${APP} mis à jour"
+  msg_info "Mise à jour de ${APP}"
+  $STD nar-deploy install
+  msg_ok "${APP} mis à jour ($(cat /opt/nounoursautoregie/version))"
 
   msg_info "Redémarrage de l'antenne"
   systemctl start nounoursautoregie

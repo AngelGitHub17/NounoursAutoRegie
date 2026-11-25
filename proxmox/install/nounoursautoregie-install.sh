@@ -6,6 +6,8 @@
 # Source: https://github.com/AngelGitHub17/NounoursAutoRegie
 #
 # Exécuté À L'INTÉRIEUR du conteneur par le moteur des community-scripts.
+# On installe les binaires autonomes de la dernière release GitHub : pas de SDK .NET,
+# pas de compilation dans le conteneur (le SDK ne fonctionne pas dans tous les LXC).
 
 source /dev/stdin <<<"$FUNCTIONS_FILE_PATH"
 color
@@ -15,50 +17,30 @@ setting_up_container
 network_check
 update_os
 
-NAR_REPO="https://github.com/AngelGitHub17/NounoursAutoRegie.git"
+NAR_RAW="https://raw.githubusercontent.com/AngelGitHub17/NounoursAutoRegie/main/proxmox"
 NAR_HOME="/opt/nounoursautoregie"
 NAR_DATA="/var/lib/nounoursautoregie"
 NAR_CONF="/etc/nounoursautoregie"
 
-msg_info "Installing Dependencies (.NET 8, FFmpeg)"
-$STD apt-get install -y git ca-certificates curl ffmpeg dotnet-sdk-8.0
+msg_info "Installing Dependencies (FFmpeg)"
+$STD apt-get install -y ca-certificates curl ffmpeg
 msg_ok "Installed Dependencies"
 
-# Le SDK .NET crée des verrous nommés (NuGet, MSBuild) dans le dossier temporaire, rangés par
-# session de processus. Lancé via lxc-attach, il n'a ni HOME ni session propre et échoue avec
-# « cannot open the device or file specified : 'NuGet-Migrations' ». Ce lanceur lui donne un
-# environnement complet et une session neuve (setsid). Il sert aussi aux mises à jour.
-cat <<'WRAPPER' >/usr/local/bin/nar-dotnet
-#!/usr/bin/env bash
-export HOME="${HOME:-/root}"
-export DOTNET_CLI_HOME=/opt/nounoursautoregie/.dotnet
-export TMPDIR=/opt/nounoursautoregie/.tmp
-export NUGET_PACKAGES=/opt/nounoursautoregie/.nuget/packages
-export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
-export DOTNET_GENERATE_ASPNET_CERTIFICATE=false MSBUILDDISABLENODEREUSE=1
-mkdir -p "$DOTNET_CLI_HOME" "$TMPDIR" "$NUGET_PACKAGES"
-chmod 1777 "$TMPDIR"
-exec setsid -w dotnet "$@"
-WRAPPER
-chmod +x /usr/local/bin/nar-dotnet
-
-msg_info "Building NounoursAutoRegie"
-chmod 1777 /tmp
-mkdir -p "$NAR_HOME"
-$STD git clone --depth 1 "$NAR_REPO" "$NAR_HOME/src"
-$STD nar-dotnet publish "$NAR_HOME/src/src/NAR.Engine/NAR.Engine.csproj" -c Release -o "$NAR_HOME/app" -nodeReuse:false
-git -C "$NAR_HOME/src" rev-parse HEAD >"$NAR_HOME/version"
-msg_ok "Built NounoursAutoRegie ($(cut -c1-7 "$NAR_HOME/version"))"
+msg_info "Installing NounoursAutoRegie"
+curl -fsSL "$NAR_RAW/nar-deploy.sh" -o /usr/local/bin/nar-deploy
+chmod +x /usr/local/bin/nar-deploy
+$STD nar-deploy install
+msg_ok "Installed NounoursAutoRegie $(cat "$NAR_HOME/version")"
 
 msg_info "Creating test channel"
 useradd --system --home-dir "$NAR_DATA" --shell /usr/sbin/nologin nar 2>/dev/null || true
 mkdir -p "$NAR_DATA"/{media,hls,asrun} "$NAR_CONF"
-$STD bash "$NAR_HOME/src/scripts/make-test-media.sh" "$NAR_DATA/media"
+$STD bash "$NAR_HOME/app/scripts/make-test-media.sh" "$NAR_DATA/media"
 
 # Chaîne de test en 1080p25 : c'est elle qui sert à valider la phase 0 (24 h sans coupure).
 cat <<EOF >"$NAR_CONF/channel.json"
 // Chaîne de test NounoursAutoRegie — modifiez puis : systemctl restart nounoursautoregie
-// Exemple complet et commenté : $NAR_HOME/src/samples/channel.example.json
+// Exemple complet et commenté : $NAR_HOME/app/samples/channel.example.json
 {
   "name": "NAR Test",
   "format": { "width": 1920, "height": 1080, "frameRate": "25" },
@@ -98,9 +80,9 @@ User=nar
 Group=nar
 WorkingDirectory=$NAR_DATA
 Environment=DOTNET_CLI_TELEMETRY_OPTOUT=1
-Environment=DOTNET_NOLOGO=1
+Environment=TMPDIR=$NAR_DATA
 Environment=NAR_CONFIG=$NAR_CONF/channel.json
-ExecStart=/usr/bin/dotnet $NAR_HOME/app/NAR.Engine.dll $NAR_CONF/channel.json
+ExecStart=$NAR_HOME/app/NAR.Engine $NAR_CONF/channel.json
 Restart=always
 RestartSec=3
 TimeoutStopSec=20
