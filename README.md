@@ -3,7 +3,7 @@
 **Régie finale de télévision pour NounoursCorp** : programmation, habillage, publicité, direct et diffusion multi-chaînes 24 h/24, sans écran noir.
 Remplaçant de NounoursTelevisionAutomatic, conçu comme un vrai logiciel d'automation broadcast plutôt que comme un générateur de chaînes IPTV.
 
-> **État : phase 1 terminée (v0.4) — régie web, médiathèque (dossiers, partages Windows, Jellyfin), conducteurs, guide des programmes, journal de diffusion, rôles.**
+> **État : v0.5 — régie web, médiathèque (dossiers, partages Windows, Jellyfin), conducteurs, guide des programmes, journal de diffusion, rôles, et atelier d'habillage « Rétro 95 ».**
 > Le cahier des charges complet et la feuille de route sont dans le document de conception du projet.
 
 ## Ce que fait NounoursAutoRegie aujourd'hui
@@ -13,6 +13,7 @@ Remplaçant de NounoursTelevisionAutomatic, conçu comme un vrai logiciel d'auto
 - **Conducteurs** : ajouter, insérer, réordonner, retirer des éléments ; horaire fixe (coupe ce qui passe) ou enchaîné ; points d'entrée et de sortie. Heures prévues calculées en direct, alertes de coupure et de bouche-trou. **Chaque modification part à l'antenne en ~2 s, sans coupure.**
 - **Médiathèque** : dossiers locaux, **partages Windows trouvés automatiquement sur le réseau**, et **bibliothèques Jellyfin** (films et séries avec saisons, épisodes, résumés, année, classification) ; rescan automatique, analyse de chaque média une fois pour toutes (durée, format, volume EBU R128 → correction vers −23 LUFS, vignette), type deviné d'après le nom (jingle, spot, bande-annonce, épisode…).
 - **Chaînes** : format (720p, 1080p25/50, 4K), encodeur (processeur ou NVENC / Quick Sync / VA-API / AMF), débit, bouche-trou, boucle.
+- **Atelier d'habillage « Rétro 95 »** : envoyez votre son et le logo de la chaîne ; l'atelier mesure le tempo, repère chaque temps et chaque attaque, et fabrique des **jingles avant programme, identités de chaîne, génériques et bandes-annonces** où une mosaïque de rectangles de couleur (cadre et liserés vert amande, rouge vif, bordeaux, chocolat, noir, blanc, touches de vert, marine et orange) se redécoupe sur la musique. Bandeau titre noir en capitales italiques, bloc d'horaire, étiquette (CINÉMA, SÉRIE…), cartouche du logo. Les bandes-annonces montent des extraits du programme, coupés sur les temps forts. Chaque création entre dans la médiathèque, prête pour les conducteurs. Variantes de palette : Rouges, Orange, Vert, Marine 95.
 - **Journal de diffusion** : tout ce qui est passé à l'antenne, jour par jour, avec durées, coupures, secours et incidents.
 - **Comptes locaux** (mot de passe haché PBKDF2) et **rôles appliqués** : Administrateur (tout), Programmateur (médiathèque, conducteurs), Régisseur (antenne, conducteurs), Lecture seule.
 - **Flux publics** sans connexion : `/live/<id>/index.m3u8` (HLS de chaque chaîne), `/live/chaines.m3u` (liste IPTV) et **`/live/epg.xml` (guide des programmes XMLTV, 48 h)**, prêts pour NounoursTV, Jellyfin et les lecteurs IPTV.

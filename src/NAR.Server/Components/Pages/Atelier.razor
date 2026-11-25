@@ -1,0 +1,273 @@
+@page "/atelier"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject IDbContextFactory<NarDbContext> DbFactory
+@inject NAR.Server.Services.Atelier.AtelierService Workshop
+@using NAR.Server.Services.Atelier
+
+<PageTitle>Atelier d'habillage — NounoursAutoRegie</PageTitle>
+
+<h1>Atelier d'habillage</h1>
+<p class="lead">Rétro 95 : une mosaïque de rectangles de couleur qui se redécoupe sur les temps de votre musique. Envoyez un son, choisissez un titre : l'atelier fabrique le jingle, l'identité, le générique ou la bande-annonce, avec le logo de la chaîne.</p>
+
+@if (_message is not null) { <div class="alert @(_ok ? "ok" : "error")">@_message</div> }
+
+<div class="layout-2" style="grid-template-columns:minmax(0,1fr) 380px">
+    <div>
+        <h2 style="margin-top:0">Fabriquer</h2>
+        @if (!CanEdit)
+        {
+            <div class="panel muted">Consultation seule : votre rôle ne permet pas de fabriquer de l'habillage.</div>
+        }
+        else
+        {
+            <div class="panel">
+                <div class="form-grid">
+                    <label class="field"><span>Type</span>
+                        <select @bind="_kind">
+                            @foreach (var k in Enum.GetValues<AtelierKind>()) { <option value="@k">@AtelierService.KindLabel(k)</option> }
+                        </select>
+                    </label>
+                    <label class="field"><span>Chaîne (format + logo)</span>
+                        <select @bind="_channelId">
+                            @foreach (var c in _channels) { <option value="@c.Id">@c.Name@(c.HasLogo ? "" : " (sans logo)")</option> }
+                        </select>
+                    </label>
+                    <label class="field"><span>Palette</span>
+                        <select @bind="_palette">
+                            @foreach (var p in Palettes.All) { <option value="@p.Key">@p.Name</option> }
+                        </select>
+                    </label>
+                    <label class="field"><span>Son</span>
+                        <select @bind="_soundId">
+                            <option value="">Sans son (tempo 120)</option>
+                            @foreach (var s in _sounds) { <option value="@s.Id">@s.Name — @Fmt.Duration(TimeSpan.FromSeconds(s.Duration)) · @s.Bpm BPM</option> }
+                        </select>
+                    </label>
+                </div>
+                <div class="form-grid" style="margin-top:14px">
+                    <label class="field"><span>@(_kind == AtelierKind.Ident ? "Nom (pour la médiathèque)" : "Titre")</span><input @bind="_title" maxlength="120" placeholder="LE GRAND FILM" /></label>
+                    @if (_kind != AtelierKind.Ident)
+                    {
+                        <label class="field"><span>Bloc d'horaire</span><input @bind="_subtitle" maxlength="80" placeholder="CE SOIR · 20H50" /></label>
+                        <label class="field"><span>Étiquette</span>
+                            <input @bind="_label" list="etiquettes" maxlength="30" placeholder="CINÉMA" />
+                            <datalist id="etiquettes">
+                                @foreach (var l in new[] { "CINÉMA", "SÉRIE", "JEUNESSE", "DOCUMENTAIRE", "INFO", "MAGAZINE", "SPORT", "MUSIQUE", "DIRECT" }) { <option value="@l" /> }
+                            </datalist>
+                        </label>
+                    }
+                    <label class="field"><span>Durée (s, vide = celle du son)</span><input type="number" min="2" max="180" step="0.5" @bind="_duration" /></label>
+                    <label class="check" style="align-self:end"><input type="checkbox" @bind="_logoOnBlack" /> Logo sur fond noir</label>
+                </div>
+
+                @if (_kind == AtelierKind.BandeAnnonce)
+                {
+                    <div class="form-grid" style="margin-top:14px">
+                        <label class="field"><span>Programme à annoncer</span>
+                            <input placeholder="Rechercher un film, un épisode…" @bind="SourceSearch" @bind:event="oninput" @bind:after="LoadSourcesAsync" />
+                            <select @bind="_sourceId" size="5" style="margin-top:6px">
+                                @foreach (var a in _sources) { <option value="@a.Id">@a.Title (@Fmt.Duration(a.Duration))</option> }
+                            </select>
+                        </label>
+                        <label class="field"><span>Extraits (facultatif)</span>
+                            <input @bind="_extracts" placeholder="ex. 2:10, 15:30, 41:05" />
+                            <span class="small muted" style="text-transform:none;letter-spacing:0">Vide : l'atelier choisit 10 moments répartis dans le programme. Les coupes tombent sur les temps forts.</span>
+                        </label>
+                    </div>
+                }
+                <div class="row" style="margin-top:16px">
+                    <button class="btn primary" disabled="@_busy" @onclick="CreateAsync">Fabriquer</button>
+                    @if (_channelId is { } chId && _channels.FirstOrDefault(c => c.Id == chId) is { HasLogo: false })
+                    {
+                        <span class="small" style="color:var(--warn)">Cette chaîne n'a pas encore de logo : « MA CHAÎNE » sera écrit à la place. Ajoutez-le dans <a href="/chaines/@chId">les réglages de la chaîne</a>.</span>
+                    }
+                </div>
+            </div>
+        }
+
+        <h2>Créations</h2>
+        @if (_creations.Count == 0)
+        {
+            <p class="muted">Rien pour l'instant.</p>
+        }
+        <div class="mosaic creations">
+            @foreach (var c in _creations)
+            {
+                <div class="screen" @key="c.Id">
+                    @if (c.Status == CreationStatus.Pret)
+                    {
+                        <video src="/atelier/creations/@(c.Id).mp4?v=@c.FinishedAt?.ToUnixTimeSeconds()" controls preload="metadata"></video>
+                    }
+                    else
+                    {
+                        <div style="aspect-ratio:16/9;background:#000;display:grid;place-items:center" class="muted">
+                            @(c.Status switch
+                            {
+                                CreationStatus.EnCours => $"Fabrication… {(Workshop.LiveProgress(c.Id) ?? 0) * 100:0} %",
+                                CreationStatus.EnAttente => "En attente",
+                                _ => "Échec",
+                            })
+                        </div>
+                    }
+                    <div class="body">
+                        <div class="title">@c.Title <span class="badge @(c.Status switch { CreationStatus.Pret => "ok", CreationStatus.Erreur => "bad", _ => "info" })">@AtelierService.KindLabel((AtelierKind)c.Kind)</span></div>
+                        <div class="small muted">@Palettes.Get(c.PaletteKey).Name · @(c.Sound?.Name ?? "sans son")@(c.Subtitle is { Length: > 0 } st ? $" · {st}" : "")</div>
+                        @if (c.Status == CreationStatus.EnCours)
+                        {
+                            <div class="progress"><div style="width:@(((Workshop.LiveProgress(c.Id) ?? 0) * 100).ToString("0", CultureInfo.InvariantCulture))%"></div></div>
+                        }
+                        @if (c.Error is not null) { <div class="small" style="color:var(--live)">@c.Error</div> }
+                        @if (CanEdit)
+                        {
+                            <div class="row">
+                                @if (c.Status is CreationStatus.Pret or CreationStatus.Erreur)
+                                {
+                                    <button class="btn sm" @onclick="() => Workshop.RedoAsync(c.Id)" title="Même réglages, autre mosaïque">Autre version</button>
+                                }
+                                @if (c.Status == CreationStatus.Pret)
+                                {
+                                    <a class="btn sm" href="/conducteur">Mettre au conducteur</a>
+                                }
+                                <button class="btn sm danger" @onclick="() => Workshop.DeleteCreationAsync(c.Id)">Retirer</button>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2 style="margin-top:0">Sons</h2>
+        <p class="small muted" style="margin-top:0">Envoyez votre musique ou votre jingle sonore (mp3, wav, ogg, flac, m4a). L'atelier en mesure le tempo et repère chaque temps et chaque attaque pour caler les rectangles dessus.</p>
+        @if (CanEdit)
+        {
+            <InputFile OnChange="UploadSoundAsync" accept="audio/*,.mp3,.wav,.ogg,.flac,.m4a" disabled="@_busy" />
+            @if (_busy) { <p class="small muted">Analyse du rythme…</p> }
+        }
+        @foreach (var s in _sounds)
+        {
+            <div style="border-top:1px solid var(--line);padding:10px 0;margin-top:10px" @key="s.Id">
+                <div class="row">
+                    <b class="grow">@s.Name</b>
+                    @if (CanEdit) { <button class="btn sm danger" @onclick="() => Workshop.DeleteSoundAsync(s.Id)">✕</button> }
+                </div>
+                <div class="small muted">@Fmt.Duration(TimeSpan.FromSeconds(s.Duration)) · <b>@s.Bpm BPM</b> · @s.BeatCount temps</div>
+                <audio controls preload="none" src="/atelier/sons/@s.Id" style="width:100%;margin-top:6px"></audio>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+    private System.Security.Claims.ClaimsPrincipal _user = new();
+    private bool CanEdit => Perm.Library(_user);
+
+    private List<Channel> _channels = new();
+    private List<AtelierSound> _sounds = new();
+    private List<AtelierCreation> _creations = new();
+    private List<MediaAsset> _sources = new();
+    private string? _message;
+    private bool _ok, _busy;
+    private DateTime _lastRefresh;
+
+    private AtelierKind _kind = AtelierKind.Jingle;
+    private int? _channelId;
+    private string _palette = "retro95";
+    private int? _soundId;
+    private string _title = "", _subtitle = "", _label = "CINÉMA", _extracts = "";
+    private double? _duration;
+    private bool _logoOnBlack;
+    private int? _sourceId;
+    private string SourceSearch { get; set; } = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthState is not null) _user = (await AuthState).User;
+        await LoadAsync();
+        await LoadSourcesAsync();
+        _channelId = _channels.FirstOrDefault()?.Id;
+        Workshop.Changed += OnChanged;
+    }
+
+    private void OnChanged()
+    {
+        if ((DateTime.UtcNow - _lastRefresh).TotalMilliseconds < 700) return;
+        _lastRefresh = DateTime.UtcNow;
+        _ = InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); });
+    }
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _channels = await db.Channels.AsNoTracking().OrderBy(c => c.Number).ToListAsync();
+        _sounds = await db.AtelierSounds.AsNoTracking().OrderByDescending(s => s.Id).ToListAsync();
+        _creations = await db.AtelierCreations.AsNoTracking().Include(c => c.Sound).OrderByDescending(c => c.Id).Take(60).ToListAsync();
+    }
+
+    private async Task LoadSourcesAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var q = db.MediaAssets.AsNoTracking().Where(a => a.Status == AssetStatus.Pret
+            && (a.Kind == AssetKind.Film || a.Kind == AssetKind.Episode || a.Kind == AssetKind.Programme || a.Kind == AssetKind.Clip));
+        if (!string.IsNullOrWhiteSpace(SourceSearch))
+        {
+            var s = $"%{SourceSearch.Trim()}%";
+            q = q.Where(a => EF.Functions.Like(a.Title, s));
+        }
+        _sources = await q.OrderBy(a => a.Title).Take(100).ToListAsync();
+    }
+
+    private async Task UploadSoundAsync(InputFileChangeEventArgs e)
+    {
+        if (!CanEdit) return;
+        _busy = true;
+        _message = null;
+        try
+        {
+            await using var stream = e.File.OpenReadStream(maxAllowedSize: 80 * 1024 * 1024);
+            var sound = await Workshop.AddSoundAsync(stream, e.File.Name, CancellationToken.None);
+            (_message, _ok) = ($"« {sound.Name} » : {sound.Bpm} BPM, {sound.BeatCount} temps repérés.", true);
+            _soundId = sound.Id;
+            await LoadAsync();
+        }
+        catch (Exception ex) when (ex is InvalidDataException or IOException)
+        {
+            (_message, _ok) = (ex.Message, false);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task CreateAsync()
+    {
+        if (!CanEdit) return;
+        _message = null;
+        var title = _title.Trim();
+        if (title.Length == 0 && _kind != AtelierKind.Ident) { (_message, _ok) = ("Donnez un titre.", false); return; }
+        if (_kind == AtelierKind.BandeAnnonce && _sourceId is null) { (_message, _ok) = ("Choisissez le programme à annoncer.", false); return; }
+
+        await Workshop.QueueAsync(new AtelierCreation
+        {
+            Kind = (int)_kind,
+            Title = title.Length == 0 ? _channels.FirstOrDefault(c => c.Id == _channelId)?.Name ?? "Identité" : title,
+            Subtitle = _kind == AtelierKind.Ident ? null : _subtitle.Trim(),
+            Label = _kind == AtelierKind.Ident ? null : _label.Trim(),
+            PaletteKey = _palette,
+            SoundId = _soundId,
+            ChannelId = _channelId,
+            LogoOnBlack = _logoOnBlack,
+            DurationSeconds = _duration,
+            SourceAssetId = _kind == AtelierKind.BandeAnnonce ? _sourceId : null,
+            ExtractStarts = _kind == AtelierKind.BandeAnnonce ? _extracts : null,
+        });
+        (_message, _ok) = ("C'est parti : la création apparaît ci-dessous et rejoint la médiathèque dès qu'elle est prête.", true);
+        await LoadAsync();
+    }
+
+    public void Dispose() => Workshop.Changed -= OnChanged;
+}

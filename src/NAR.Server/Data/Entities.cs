@@ -56,6 +56,9 @@ public class Channel
     public double PreloadSeconds { get; set; } = 10;
     public bool Loop { get; set; }
 
+    /// <summary>Logo de la chaîne (logo.png dans son dossier), utilisé par l'atelier d'habillage.</summary>
+    public bool HasLogo { get; set; }
+
     public int? FillerAssetId { get; set; }
     public MediaAsset? FillerAsset { get; set; }
 
@@ -207,4 +210,54 @@ public static class Roles
     public const string Regisseur = "Régisseur";
     public const string Lecture = "Lecture seule";
     public static readonly string[] All = [Admin, Programmateur, Regisseur, Lecture];
+}
+
+public enum CreationStatus
+{
+    EnAttente,
+    EnCours,
+    Pret,
+    Erreur,
+}
+
+/// <summary>Son envoyé dans l'atelier d'habillage, avec son analyse rythmique.</summary>
+public class AtelierSound
+{
+    public int Id { get; set; }
+    [MaxLength(200)] public string Name { get; set; } = "";
+    [MaxLength(200)] public string FileName { get; set; } = "";
+    public double Duration { get; set; }
+    public double Bpm { get; set; }
+    public int BeatCount { get; set; }
+
+    /// <summary>Analyse complète (temps, forces, attaques, énergie) en JSON.</summary>
+    public string AnalysisJson { get; set; } = "";
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>Une vidéo d'habillage fabriquée (ou à fabriquer) par l'atelier.</summary>
+public class AtelierCreation
+{
+    public int Id { get; set; }
+    public int Kind { get; set; }
+    [MaxLength(200)] public string Title { get; set; } = "";
+    [MaxLength(200)] public string? Subtitle { get; set; }
+    [MaxLength(60)] public string? Label { get; set; }
+    [MaxLength(32)] public string PaletteKey { get; set; } = "retro95";
+    public int? SoundId { get; set; }
+    public AtelierSound? Sound { get; set; }
+    public int? ChannelId { get; set; }
+    public bool LogoOnBlack { get; set; }
+    public double? DurationSeconds { get; set; }
+    public int? SourceAssetId { get; set; }
+    [MaxLength(300)] public string? ExtractStarts { get; set; }
+    public int Seed { get; set; }
+
+    public CreationStatus Status { get; set; } = CreationStatus.EnAttente;
+    public double Progress { get; set; }
+    [MaxLength(500)] public string? Error { get; set; }
+    [MaxLength(300)] public string? OutputFile { get; set; }
+    public int? AssetId { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset? FinishedAt { get; set; }
 }

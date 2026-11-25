@@ -8,6 +8,27 @@ using NAR.Server.Endpoints;
 using NAR.Server.Services;
 
 // NounoursAutoRegie — serveur de régie : médiathèque, conducteurs, supervision des moteurs, régie web.
+
+// Outil de diagnostic : analyse rythmique d'un son (NAR.Server --analyser fichier.mp3).
+if (args.Length >= 2 && args[0] == "--analyser")
+{
+    var opts = Microsoft.Extensions.Options.Options.Create(new NarOptions());
+    var rhythm = await new NAR.Server.Services.Atelier.AudioAnalyzer(opts).AnalyzeAsync(args[1], CancellationToken.None);
+    Console.WriteLine($"Durée {rhythm.Duration:0.00} s · {rhythm.Bpm} BPM · {rhythm.Beats.Length} temps · 1er temps fort : phase {rhythm.DownbeatPhase} · {rhythm.Accents.Length} attaques");
+    Console.WriteLine("Temps : " + string.Join(" ", rhythm.Beats.Take(16).Select(b => b.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture))));
+    if (args.Length >= 3)
+    {
+        var job = new NAR.Server.Services.Atelier.AtelierJob(
+            Enum.Parse<NAR.Server.Services.Atelier.AtelierKind>(args.Length >= 4 ? args[3] : "Jingle"),
+            "Le Grand Film", "Ce soir · 20H50", "Cinéma", NAR.Server.Services.Atelier.Palettes.Get("retro95"),
+            args[1], rhythm, args.Length >= 5 ? args[4] : null, false, 1280, 720, new NAR.Core.Media.FrameRate(25),
+            Math.Min(rhythm.Duration, 20), args.Length >= 6 ? args[5] : null, [5, 20, 35, 50], 42, args[2]);
+        await new NAR.Server.Services.Atelier.Retro95Renderer(opts, Microsoft.Extensions.Logging.Abstractions.NullLogger<NAR.Server.Services.Atelier.Retro95Renderer>.Instance)
+            .RenderAsync(job, null, CancellationToken.None);
+        Console.WriteLine($"Rendu : {args[2]}");
+    }
+    return;
+}
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = args, ContentRootPath = AppContext.BaseDirectory });
 
 // Exécution depuis la sortie de compilation (développement) : les fichiers web viennent du manifeste.
@@ -69,6 +90,10 @@ builder.Services.AddSingleton<EngineConfigBuilder>();
 builder.Services.AddSingleton<Accounts>();
 builder.Services.AddSingleton<Seeder>();
 builder.Services.AddSingleton<ScheduleService>();
+builder.Services.AddSingleton<NAR.Server.Services.Atelier.AudioAnalyzer>();
+builder.Services.AddSingleton<NAR.Server.Services.Atelier.Retro95Renderer>();
+builder.Services.AddSingleton<NAR.Server.Services.Atelier.AtelierService>();
+builder.Services.AddHostedService<NAR.Server.Services.Atelier.AtelierWorker>();
 builder.Services.AddSingleton<EngineSupervisor>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<EngineSupervisor>());
 builder.Services.AddSingleton<EngineMonitor>();
@@ -116,6 +141,7 @@ app.MapEpg();
 app.MapMediaFiles();
 app.MapSmbRelay();
 app.MapJellyfinRelay();
+app.MapAtelierFiles();
 app.MapAccountEndpoints();
 
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode();

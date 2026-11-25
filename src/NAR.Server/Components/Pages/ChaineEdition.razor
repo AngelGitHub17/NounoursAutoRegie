@@ -5,6 +5,7 @@
 @inject IDbContextFactory<NarDbContext> DbFactory
 @inject EngineSupervisor Supervisor
 @inject NavigationManager Nav
+@inject NAR.Server.Services.Atelier.AtelierService Atelier
 
 <PageTitle>@(_isNew ? "Nouvelle chaîne" : _channel?.Name) — NounoursAutoRegie</PageTitle>
 
@@ -32,6 +33,23 @@ else
             <label class="field"><span>Numéro</span><input type="number" min="1" @bind="_channel.Number" /></label>
             <label class="check" style="align-self:end"><input type="checkbox" @bind="_channel.Enabled" /> Antenne allumée</label>
         </div>
+
+        @if (!_isNew)
+        {
+            <h2>Logo</h2>
+            <div class="row">
+                @if (_channel.HasLogo)
+                {
+                    <img src="/chaines/@_channel.Id/logo.png?v=@_logoVersion" alt="Logo" style="height:72px;max-width:240px;object-fit:contain;background:repeating-conic-gradient(#2a2f3a 0 25%,#1b2030 0 50%) 0 0/16px 16px;border-radius:6px;padding:6px" />
+                }
+                else
+                {
+                    <span class="muted">Pas encore de logo.</span>
+                }
+                <InputFile OnChange="UploadLogoAsync" accept="image/png,image/jpeg,image/webp" />
+                <span class="small muted">PNG transparent conseillé. Utilisé par l'atelier d'habillage (cartouche Rétro 95).</span>
+            </div>
+        }
 
         <h2>Format d'antenne</h2>
         <div class="form-grid">
@@ -115,6 +133,24 @@ else
     private List<MediaAsset> _fillers = new();
     private string? _error;
     private bool _saved, _confirmDelete;
+    private long _logoVersion = DateTime.UtcNow.Ticks;
+
+    private async Task UploadLogoAsync(InputFileChangeEventArgs e)
+    {
+        if (_channel is null || _isNew) return;
+        try
+        {
+            await using var stream = e.File.OpenReadStream(maxAllowedSize: 15 * 1024 * 1024);
+            await Atelier.SaveLogoAsync(_channel.Id, stream, CancellationToken.None);
+            _channel.HasLogo = true;
+            _logoVersion = DateTime.UtcNow.Ticks;
+            _error = null;
+        }
+        catch (Exception ex) when (ex is InvalidDataException or IOException)
+        {
+            _error = ex.Message;
+        }
+    }
 
     private sealed record Preset(string Key, string Label, int W, int H, string Rate, int Kbps, string Encoder);
     private static readonly Preset[] Presets =

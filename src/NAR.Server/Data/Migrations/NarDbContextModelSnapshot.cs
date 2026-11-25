@@ -57,6 +57,122 @@ namespace NAR.Server.Data.Migrations
                     b.ToTable("Users");
                 });
 
+            modelBuilder.Entity("NAR.Server.Data.AtelierCreation", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("AssetId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("ChannelId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<double?>("DurationSeconds")
+                        .HasColumnType("REAL");
+
+                    b.Property<string>("Error")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ExtractStarts")
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("FinishedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Label")
+                        .HasMaxLength(60)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("LogoOnBlack")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("OutputFile")
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PaletteKey")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<double>("Progress")
+                        .HasColumnType("REAL");
+
+                    b.Property<int>("Seed")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("SoundId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("SourceAssetId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Subtitle")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SoundId");
+
+                    b.ToTable("AtelierCreations");
+                });
+
+            modelBuilder.Entity("NAR.Server.Data.AtelierSound", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("AnalysisJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("BeatCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<double>("Bpm")
+                        .HasColumnType("REAL");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<double>("Duration")
+                        .HasColumnType("REAL");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("AtelierSounds");
+                });
+
             modelBuilder.Entity("NAR.Server.Data.Channel", b =>
                 {
                     b.Property<int>("Id")
@@ -86,6 +202,9 @@ namespace NAR.Server.Data.Migrations
                         .IsRequired()
                         .HasMaxLength(16)
                         .HasColumnType("TEXT");
+
+                    b.Property<bool>("HasLogo")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int>("Height")
                         .HasColumnType("INTEGER");
@@ -382,6 +501,16 @@ namespace NAR.Server.Data.Migrations
                     b.HasIndex("ChannelId", "Position");
 
                     b.ToTable("PlaylistEntries");
+                });
+
+            modelBuilder.Entity("NAR.Server.Data.AtelierCreation", b =>
+                {
+                    b.HasOne("NAR.Server.Data.AtelierSound", "Sound")
+                        .WithMany()
+                        .HasForeignKey("SoundId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Sound");
                 });
 
             modelBuilder.Entity("NAR.Server.Data.Channel", b =>
