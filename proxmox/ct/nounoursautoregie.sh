@@ -45,8 +45,13 @@ function update_script() {
   curl -fsSL "${COMMUNITY_SCRIPTS_URL}/nar-deploy.sh" -o /usr/local/bin/nar-deploy
   chmod +x /usr/local/bin/nar-deploy
 
-  if ! nar-deploy check >/dev/null; then
+  local rc=0
+  nar-deploy check >/dev/null || rc=$?
+  if [[ $rc -eq 2 ]]; then
     msg_ok "${APP} est déjà à jour ($(cat /opt/nounoursautoregie/version))"
+    exit
+  elif [[ $rc -ne 0 ]]; then
+    msg_error "Impossible de joindre GitHub pour vérifier les mises à jour"
     exit
   fi
 

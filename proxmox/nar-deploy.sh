@@ -17,7 +17,13 @@ latest_json() {
   curl -fsSL -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${REPO}/releases/latest"
 }
 
-latest_tag() { latest_json | grep -m1 '"tag_name"' | cut -d'"' -f4; }
+# On lit d'abord toute la réponse : un « grep -m1 » directement derrière curl coupe le flux
+# et fait échouer curl (code 23) avec pipefail.
+latest_tag() {
+  local json
+  json="$(latest_json)" || return 1
+  grep -m1 '"tag_name"' <<<"$json" | cut -d'"' -f4
+}
 
 current_tag() { cat "${NAR_HOME}/version" 2>/dev/null || echo "aucune"; }
 
@@ -58,7 +64,7 @@ EOF
 
 case "${1:-install}" in
 check)
-  TAG="$(latest_tag)"
+  TAG="$(latest_tag)" || TAG=""
   [[ -n "$TAG" ]] || { echo "Aucune release trouvée sur ${REPO}" >&2; exit 1; }
   echo "Installée : $(current_tag) — disponible : ${TAG}"
   [[ "$TAG" != "$(current_tag)" ]] && exit 0 || exit 2
