@@ -1,0 +1,22 @@
+// Configuration de test rapide (petite résolution) utilisée avec scripts/make-test-media.sh.
+// Lancement : dotnet run --project src/NAR.Engine -- samples/channel.test.json
+{
+  "name": "NAR Test",
+  "format": { "width": 640, "height": 360, "frameRate": "25" },
+  "encoder": { "video": "libx264", "preset": "veryfast", "videoBitrateKbps": 1200, "audioBitrateKbps": 128 },
+  "hls": { "directory": "../out/test", "segmentSeconds": 2, "listSize": 10 },
+  "statusPort": 8090,
+  "preloadSeconds": 3,
+  "filler": "media/bouche-trou.mp4",
+  "asRunDirectory": "../out/asrun",
+  "playlist": {
+    "loop": true,
+    "items": [
+      { "id": "J1", "title": "Jingle d'ouverture", "path": "media/jingle.mp4" },
+      { "id": "P1", "title": "Programme test", "path": "media/programme.mp4", "in": "00:00:01", "out": "00:00:07" },
+      { "id": "S1", "title": "Spot sans son (4:3)", "path": "media/spot-sans-son.mp4", "gainDb": -3 },
+      { "id": "X1", "title": "Fichier manquant (doit être sauté)", "path": "media/absent.mp4" },
+      { "id": "B1", "title": "Bande-annonce 50 i/s", "path": "media/bande-annonce.mp4" }
+    ]
+  }
+}

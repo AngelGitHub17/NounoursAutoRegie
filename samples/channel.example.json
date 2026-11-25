@@ -1,0 +1,35 @@
+// Exemple de chaîne en 1080p25 — à copier et adapter.
+// Les chemins relatifs partent du dossier de ce fichier. Sous Windows, utilisez des / ou des \\ doublés.
+{
+  "name": "NounoursTV",
+  "format": { "width": 1920, "height": 1080, "frameRate": "25" },
+
+  // Encodeur : "libx264" (processeur), "h264_nvenc" (NVIDIA), "h264_qsv" (Intel), "h264_amf" (AMD).
+  // Pour la 4K : "hevc_nvenc" ou "libx265" avec un débit adapté (15 000 à 25 000 kb/s).
+  // Le preset dépend de l'encodeur : veryfast/faster pour x264, p4/p5 pour NVENC.
+  "encoder": { "video": "libx264", "preset": "veryfast", "videoBitrateKbps": 6000, "audioBitrateKbps": 160 },
+
+  "hls": { "directory": "out/nounourstv", "segmentSeconds": 2, "listSize": 15 },
+  "statusPort": 8090,
+
+  // Chemins de FFmpeg / FFprobe si ils ne sont pas dans le PATH (ex. "C:/ffmpeg/bin/ffmpeg.exe").
+  "ffmpegPath": "ffmpeg",
+  "ffprobePath": "ffprobe",
+
+  "preloadSeconds": 10,
+  "filler": "media/bouche-trou.mp4",
+  "asRunDirectory": "asrun",
+
+  "playlist": {
+    "loop": false,
+    "items": [
+      { "id": "OUV", "title": "Ouverture d'antenne", "path": "media/jingle.mp4" },
+      { "id": "MAT", "title": "Dessins animés", "path": "media/episode1.mp4" },
+      { "id": "PUB1", "title": "Écran pub", "path": "media/spot1.mp4", "gainDb": -2 },
+      // Horaire fixe : le JT coupe ce qui passe à 20:00:00 pile (aujourd'hui), ou utilisez une date ISO complète.
+      { "id": "JT20", "title": "Le 20 heures", "path": "media/jt.mp4", "startAt": "20:00:00" },
+      // Points d'entrée / sortie en hh:mm:ss.fff
+      { "id": "FILM", "title": "Film du soir", "path": "media/film.mkv", "in": "00:00:12.5", "out": "01:42:00" }
+    ]
+  }
+}

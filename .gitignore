@@ -1,0 +1,18 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+.vscode/
+.idea/
+TestResults/
+*.swp
+
+## NounoursAutoRegie — sorties et médias locaux
+out/
+asrun/
+samples/media/
+samples/_*.json
+*.ts
+*.m3u8
