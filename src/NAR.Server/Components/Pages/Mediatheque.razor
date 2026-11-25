@@ -30,14 +30,22 @@
                     <tr>
                         <td>
                             @if (f.Source == FolderSource.Smb) { <span class="badge info" style="margin-right:6px">Partage Windows</span> }
-                            <span class="mono small">@f.Path @(f.Recursive ? "" : "(sans sous-dossiers)")</span>
+                            @if (f.Source == FolderSource.Jellyfin)
+                            {
+                                <span class="badge info" style="margin-right:6px">Jellyfin</span>
+                                <span>@f.RemoteLibraryName</span> <span class="mono small muted">@f.RemoteUrl</span>
+                            }
+                            else
+                            {
+                                <span class="mono small">@f.Path @(f.Recursive ? "" : "(sans sous-dossiers)")</span>
+                            }
                             @if (f.LastScanError is not null) { <div class="small" style="color:var(--live)">@f.LastScanError</div> }
                         </td>
                         <td>@Fmt.Kind(f.DefaultKind)</td>
                         <td class="num">@f.LastScanCount</td>
                         <td class="small">@(f.LastScanAt is { } at ? at.ToLocalTime().ToString("dd/MM HH:mm") : "—")</td>
                         <td>
-                            <div class="row">
+                            <div class="row" style="@(CanEdit ? "" : "display:none")">
                                 <button class="btn sm" disabled="@_busy" @onclick="() => ScanAsync(f.Id)">Parcourir</button>
                                 <button class="btn sm danger" @onclick="() => RemoveFolderAsync(f.Id)">Retirer</button>
                             </div>
@@ -47,6 +55,8 @@
             </tbody>
         </table>
     }
+    @if (CanEdit)
+    {
     <div class="row">
         <input class="grow" placeholder="Chemin du dossier" @bind="_newPath" />
         <select @bind="_newKind">
@@ -58,7 +68,11 @@
         <label class="check"><input type="checkbox" @bind="_newRecursive" /> Sous-dossiers</label>
         <button class="btn primary" disabled="@_busy" @onclick="AddFolderAsync">Ajouter</button>
     </div>
+    }
 </div>
+
+@if (CanEdit)
+{
 
 <h2>Partage d'un PC Windows</h2>
 <div class="panel">
@@ -126,6 +140,33 @@
     }
 </div>
 
+<h2>Jellyfin</h2>
+<div class="panel">
+    <p class="muted" style="margin-top:0">Importe les films et les séries d'un serveur Jellyfin, avec leurs résumés, saisons et épisodes.
+        Créez une clé dans Jellyfin : Tableau de bord → Clés API → « + ».</p>
+    <div class="form-grid">
+        <label class="field"><span>Adresse du serveur</span><input @bind="_jfUrl" placeholder="http://192.168.1.10:8096" /></label>
+        <label class="field"><span>Clé API</span><input type="password" @bind="_jfKey" autocomplete="off" /></label>
+        <div style="align-self:end"><button class="btn" disabled="@_busy" @onclick="ConnectJellyfinAsync">Se connecter</button></div>
+    </div>
+    @if (_jfLibraries is not null)
+    {
+        <p style="margin:14px 0 8px">Serveur <b>@_jfServerName</b> — bibliothèques à importer :</p>
+        <div class="row" style="margin-bottom:12px">
+            @foreach (var lib in _jfLibraries)
+            {
+                <label class="check panel" style="padding:8px 12px">
+                    <input type="checkbox" checked="@_jfSelected.Contains(lib.Id)" @onchange="e => ToggleLibrary(lib.Id, e.Value is true)" />
+                    @lib.Name <span class="small muted">@LibraryLabel(lib.CollectionType)</span>
+                </label>
+            }
+        </div>
+        <button class="btn primary" disabled="@(_busy || _jfSelected.Count == 0)" @onclick="ImportJellyfinAsync">Importer dans la médiathèque</button>
+    }
+</div>
+
+}
+
 <h2>Médias <span class="muted" style="text-transform:none">(@_total)</span></h2>
 <div class="row" style="margin-bottom:10px">
     <input class="grow" placeholder="Rechercher un titre ou un fichier…" @bind="Search" @bind:event="oninput" @bind:after="ReloadAsync" />
@@ -170,7 +211,7 @@
                         }
                         else
                         {
-                            <div>@a.Title</div>
+                            <div title="@a.Overview">@a.Title</div>
                             <div class="small muted mono" title="@a.Path">@a.FileName</div>
                         }
                         @if (a.Error is not null && a.Status != AssetStatus.Pret)
@@ -198,7 +239,7 @@
                     <td class="small mono">@(a.LoudnessLufs is { } l ? $"{l:0.0} LUFS → {a.GainDb:+0.0;-0.0;0} dB" : "—")</td>
                     <td><span class="badge @css">@label</span></td>
                     <td>
-                        <div class="row">
+                        <div class="row" style="@(CanEdit ? "" : "display:none")">
                             @if (_editing == a.Id)
                             {
                                 <button class="btn sm primary" @onclick="() => SaveAssetAsync(a)">OK</button>
@@ -207,7 +248,7 @@
                             {
                                 <button class="btn sm" @onclick="() => _editing = a.Id">Modifier</button>
                             }
-                            <button class="btn sm" @onclick="() => Library.ReanalyzeAsync(a.Id)" title="Relancer l'analyse">↻</button>
+                            <button class="btn sm" @onclick="() => ReanalyzeAsync(a.Id)" title="Relancer l'analyse">↻</button>
                         </div>
                     </td>
                 </tr>
@@ -224,6 +265,9 @@
 }
 
 @code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+    private System.Security.Claims.ClaimsPrincipal _user = new();
+    private bool CanEdit => Perm.Library(_user);
     private List<MediaFolder> _folders = new();
     private List<MediaAsset> _assets = new();
     private int _total, _limit = 100;
@@ -233,6 +277,10 @@
     private string? _message;
     private int? _editing;
     private bool _scanning;
+    private string _jfUrl = "", _jfKey = "";
+    private string? _jfServerName;
+    private List<JellyfinLibrary>? _jfLibraries;
+    private readonly HashSet<string> _jfSelected = new();
     private List<NetworkHost>? _hosts;
     private List<string>? _shares;
     private string _smbHost = "", _smbUser = "", _smbPassword = "", _smbSubPath = "";
@@ -247,6 +295,7 @@
 
     protected override async Task OnInitializedAsync()
     {
+        if (AuthState is not null) _user = (await AuthState).User;
         await LoadFoldersAsync();
         await ReloadAsync();
         Library.Changed += OnLibraryChanged;
@@ -293,6 +342,7 @@
 
     private async Task AddFolderAsync()
     {
+        if (!CanEdit) return;
         _message = null;
         var path = _newPath.Trim();
         if (path.Length == 0) return;
@@ -319,6 +369,7 @@
 
     private async Task ScanAsync(int folderId)
     {
+        if (!CanEdit) return;
         _busy = true;
         try
         {
@@ -339,6 +390,7 @@
 
     private async Task RemoveFolderAsync(int folderId)
     {
+        if (!CanEdit) return;
         await using var db = await DbFactory.CreateDbContextAsync();
         var folder = await db.MediaFolders.FindAsync(folderId);
         if (folder is null) return;
@@ -350,6 +402,7 @@
 
     private async Task SaveAssetAsync(MediaAsset a)
     {
+        if (!CanEdit) return;
         await using var db = await DbFactory.CreateDbContextAsync();
         var entity = await db.MediaAssets.FindAsync(a.Id);
         if (entity is not null)
@@ -363,6 +416,7 @@
 
     private async Task ScanNetworkAsync()
     {
+        if (!CanEdit) return;
         _scanning = true;
         _message = null;
         StateHasChanged();
@@ -390,6 +444,7 @@
 
     private async Task ListSharesAsync()
     {
+        if (!CanEdit) return;
         _message = null;
         _shares = null;
         _smbShare = null;
@@ -415,6 +470,7 @@
 
     private async Task AddSmbFolderAsync()
     {
+        if (!CanEdit) return;
         if (_smbShare is null) return;
         _message = null;
         _busy = true;
@@ -468,6 +524,116 @@
         {
             _busy = false;
         }
+    }
+
+    private async Task ReanalyzeAsync(int id)
+    {
+        if (CanEdit) await Library.ReanalyzeAsync(id);
+    }
+
+    private static string LibraryLabel(string? type) => type switch
+    {
+        "movies" => "films",
+        "tvshows" => "séries",
+        "musicvideos" => "clips",
+        "homevideos" => "vidéos",
+        null => "mixte",
+        _ => type,
+    };
+
+    private void ToggleLibrary(string id, bool on)
+    {
+        if (on) _jfSelected.Add(id); else _jfSelected.Remove(id);
+    }
+
+    private async Task ConnectJellyfinAsync()
+    {
+        if (!CanEdit) return;
+        _message = null;
+        _jfLibraries = null;
+        _jfSelected.Clear();
+        _busy = true;
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            var client = Smb.Jellyfin(_jfUrl, _jfKey.Trim());
+            _jfServerName = await client.ServerNameAsync(cts.Token);
+            _jfLibraries = (await client.LibrariesAsync(cts.Token))
+                .Where(l => l.CollectionType is null or "movies" or "tvshows" or "musicvideos" or "homevideos" or "mixed")
+                .ToList();
+            foreach (var l in _jfLibraries.Where(l => l.CollectionType is "movies" or "tvshows")) _jfSelected.Add(l.Id);
+            _jfUrl = client.BaseUrl;
+        }
+        catch (Exception ex) when (ex is JellyfinException or UriFormatException or InvalidOperationException or OperationCanceledException)
+        {
+            (_message, _messageOk) = (ex is OperationCanceledException ? "Le serveur Jellyfin ne répond pas." : ex.Message, false);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ImportJellyfinAsync()
+    {
+        if (!CanEdit) return;
+        if (_jfLibraries is null) return;
+        _busy = true;
+        _message = null;
+        var ids = new List<int>();
+        try
+        {
+            await using (var db = await DbFactory.CreateDbContextAsync())
+            {
+                foreach (var lib in _jfLibraries.Where(l => _jfSelected.Contains(l.Id)))
+                {
+                    var path = SmbSources.JellyfinFolderPath(_jfUrl, lib.Id);
+                    var existing = await db.MediaFolders.FirstOrDefaultAsync(f => f.Path == path);
+                    if (existing is not null)
+                    {
+                        // Même bibliothèque : on met simplement à jour la clé.
+                        existing.RemoteKeyProtected = Smb.Protect(_jfKey.Trim());
+                        existing.RemoteUrl = _jfUrl;
+                        ids.Add(existing.Id);
+                        continue;
+                    }
+                    var folder = new MediaFolder
+                    {
+                        Path = path,
+                        Source = FolderSource.Jellyfin,
+                        RemoteUrl = _jfUrl,
+                        RemoteKeyProtected = Smb.Protect(_jfKey.Trim()),
+                        RemoteLibraryId = lib.Id,
+                        RemoteLibraryName = lib.Name,
+                        DefaultKind = lib.CollectionType == "tvshows" ? AssetKind.Episode : lib.CollectionType == "movies" ? AssetKind.Film : AssetKind.Programme,
+                    };
+                    db.MediaFolders.Add(folder);
+                    await db.SaveChangesAsync();
+                    ids.Add(folder.Id);
+                }
+                await db.SaveChangesAsync();
+            }
+            int added = 0, updated = 0;
+            foreach (var id in ids)
+            {
+                var (a, u, _) = await Library.ScanFolderAsync(id);
+                added += a;
+                updated += u;
+            }
+            (_message, _messageOk) = ($"Jellyfin : {added} film(s) / épisode(s) ajouté(s), {updated} mis à jour. L'analyse (volume, vignettes) continue en arrière-plan.", true);
+            _jfLibraries = null;
+            _jfKey = "";
+        }
+        catch (Exception ex) when (ex is JellyfinException or IOException)
+        {
+            (_message, _messageOk) = (ex.Message, false);
+        }
+        finally
+        {
+            _busy = false;
+        }
+        await LoadFoldersAsync();
+        await ReloadAsync();
     }
 
     public void Dispose() => Library.Changed -= OnLibraryChanged;

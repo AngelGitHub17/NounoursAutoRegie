@@ -1,5 +1,6 @@
 @page "/chaines/nouvelle"
 @page "/chaines/{Id:int}"
+@attribute [Authorize(Roles = Roles.Admin)]
 @rendermode InteractiveServer
 @inject IDbContextFactory<NarDbContext> DbFactory
 @inject EngineSupervisor Supervisor

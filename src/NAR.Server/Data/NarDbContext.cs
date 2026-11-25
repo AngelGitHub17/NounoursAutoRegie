@@ -25,6 +25,7 @@ public class NarDbContext(DbContextOptions<NarDbContext> options) : DbContext(op
             e.HasIndex(x => x.Path).IsUnique();
             e.HasIndex(x => x.Status);
             e.HasIndex(x => x.Kind);
+            e.HasIndex(x => x.SeriesName);
             e.HasOne(x => x.Folder).WithMany().HasForeignKey(x => x.FolderId).OnDelete(DeleteBehavior.SetNull);
         });
         b.Entity<PlaylistEntry>(e =>

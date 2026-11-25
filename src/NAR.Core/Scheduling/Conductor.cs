@@ -87,6 +87,14 @@ public sealed class Conductor
         return cycle == 0 ? _items[index].FixedStartFrame : null;
     }
 
+    /// <summary>
+    /// Horaire fixe encore valable : un élément dont toute la plage horaire est déjà passée
+    /// (moteur redémarré tard, conducteur en boucle…) n'est plus calé, il s'enchaîne normalement
+    /// au lieu de couper ce qui passe pour être aussitôt terminé.
+    /// </summary>
+    private long? ActiveFixedStart(int index, long frame) =>
+        FixedStartOf(index) is long start && frame < start + _items[index].DurationFrames ? start : null;
+
     /// <param name="frame">Image en cours depuis l'époque du moteur.</param>
     /// <param name="currentEnded">Vrai si la source en cours est terminée (ou en échec).</param>
     public ConductorDecision Tick(long frame, bool currentEnded)
@@ -100,13 +108,13 @@ public sealed class Conductor
         var next = NextIndex;
 
         // 1. Un horaire fixe est atteint : on coupe, quoi qu'il arrive.
-        if (next >= 0 && FixedStartOf(next) is long fixedStart && frame >= fixedStart)
+        if (next >= 0 && ActiveFixedStart(next, frame) is long fixedStart && frame >= fixedStart)
             return StartAt(next, frame, frame - fixedStart);
 
         // 2. La source est finie : on enchaîne, ou on passe en secours jusqu'au prochain horaire.
         if (currentEnded && !_inFallback)
         {
-            if (next >= 0 && FixedStartOf(next) is null)
+            if (next >= 0 && ActiveFixedStart(next, frame) is null)
                 return StartAt(next, frame, 0);
 
             _inFallback = true;
@@ -121,7 +129,7 @@ public sealed class Conductor
         if (next < 0 || next == _preloaded) return -1;
 
         bool due;
-        if (FixedStartOf(next) is long fixedStart)
+        if (ActiveFixedStart(next, frame) is long fixedStart)
             due = frame >= fixedStart - _preloadFrames;
         else
             due = !_inFallback && _current >= 0 && _currentEndFrame - frame <= _preloadFrames;

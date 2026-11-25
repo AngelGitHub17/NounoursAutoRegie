@@ -57,6 +57,8 @@ builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddHttpClient("engines", c => c.Timeout = TimeSpan.FromSeconds(3));
 builder.Services.AddHttpClient("live", c => c.Timeout = TimeSpan.FromSeconds(15));
+builder.Services.AddHttpClient("jellyfin", c => c.Timeout = TimeSpan.FromSeconds(30));
+builder.Services.AddHttpClient("jellyfin-stream", c => c.Timeout = Timeout.InfiniteTimeSpan);
 
 builder.Services.AddSingleton<EngineKey>();
 builder.Services.AddSingleton<FfmpegTools>();
@@ -66,6 +68,7 @@ builder.Services.AddSingleton<MediaLibrary>();
 builder.Services.AddSingleton<EngineConfigBuilder>();
 builder.Services.AddSingleton<Accounts>();
 builder.Services.AddSingleton<Seeder>();
+builder.Services.AddSingleton<ScheduleService>();
 builder.Services.AddSingleton<EngineSupervisor>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<EngineSupervisor>());
 builder.Services.AddSingleton<EngineMonitor>();
@@ -109,8 +112,10 @@ app.UseAntiforgery();
 
 app.MapEngineApi();
 app.MapLive();
+app.MapEpg();
 app.MapMediaFiles();
 app.MapSmbRelay();
+app.MapJellyfinRelay();
 app.MapAccountEndpoints();
 
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode();

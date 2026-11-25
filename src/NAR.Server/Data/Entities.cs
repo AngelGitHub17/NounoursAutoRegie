@@ -69,6 +69,8 @@ public enum FolderSource
     Local,
     /// <summary>Dossier partagé Windows (SMB), lu par le réseau sans montage.</summary>
     Smb,
+    /// <summary>Bibliothèque d'un serveur Jellyfin (films, séries).</summary>
+    Jellyfin,
 }
 
 /// <summary>Dossier surveillé par la médiathèque.</summary>
@@ -88,6 +90,12 @@ public class MediaFolder
 
     /// <summary>Mot de passe chiffré (Data Protection), jamais en clair dans la base.</summary>
     [MaxLength(2000)] public string? SmbPasswordProtected { get; set; }
+
+    /// <summary>Jellyfin : adresse du serveur, clé API chiffrée, bibliothèque.</summary>
+    [MaxLength(300)] public string? RemoteUrl { get; set; }
+    [MaxLength(2000)] public string? RemoteKeyProtected { get; set; }
+    [MaxLength(64)] public string? RemoteLibraryId { get; set; }
+    [MaxLength(200)] public string? RemoteLibraryName { get; set; }
 
     [MaxLength(300)] public string? LastScanError { get; set; }
     public bool Recursive { get; set; } = true;
@@ -129,6 +137,17 @@ public class MediaAsset
     public double GainDb { get; set; }
 
     public bool HasThumbnail { get; set; }
+
+    // Métadonnées éditoriales (Jellyfin, ou saisies) : utilisées par l'EPG et plus tard les grilles.
+    [MaxLength(64)] public string? ExternalId { get; set; }
+    [MaxLength(300)] public string? SeriesName { get; set; }
+    public int? SeasonNumber { get; set; }
+    public int? EpisodeNumber { get; set; }
+    [MaxLength(300)] public string? EpisodeTitle { get; set; }
+    public int? Year { get; set; }
+    [MaxLength(2000)] public string? Overview { get; set; }
+    [MaxLength(32)] public string? Rating { get; set; }
+    [MaxLength(300)] public string? Genres { get; set; }
     public DateTimeOffset AddedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? AnalyzedAt { get; set; }
 }

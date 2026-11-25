@@ -2,7 +2,15 @@
     <Found Context="routeData">
         <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)">
             <NotAuthorized>
-                <RedirectToLogin />
+                @if (context.User.Identity?.IsAuthenticated == true)
+                {
+                    <h1>Accès réservé</h1>
+                    <p class="lead">Votre rôle (@context.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value) ne permet pas d'ouvrir cette page. <a href="/">Retour à l'antenne</a></p>
+                }
+                else
+                {
+                    <RedirectToLogin />
+                }
             </NotAuthorized>
         </AuthorizeRouteView>
     </Found>

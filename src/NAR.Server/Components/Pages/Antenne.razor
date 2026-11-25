@@ -12,7 +12,7 @@
         <h1>Antenne</h1>
         <p class="lead" style="margin:0">Toutes les chaînes en direct. Flux IPTV : <a href="/live/chaines.m3u" target="_blank">/live/chaines.m3u</a></p>
     </div>
-    <a class="btn" href="/chaines/nouvelle">+ Nouvelle chaîne</a>
+    @if (Perm.Admin(_user)) { <a class="btn" href="/chaines/nouvelle">+ Nouvelle chaîne</a> }
 </div>
 
 @if (_channels is null)
@@ -81,17 +81,18 @@ else
                         <div class="small muted">Moteur relancé @engine.Restarts fois@(engine.LastExitCode is { } code ? $" (dernier code {code})" : "")</div>
                     }
                     <div class="row">
-                        @if (c.Enabled)
+                        @if (CanAntenna && c.Enabled)
                         {
                             <button class="btn sm" @onclick="() => SetEnabled(c, false)">Éteindre</button>
-                            <button class="btn sm" @onclick="() => Supervisor.Restart(c.Id)">Redémarrer</button>
+                            <button class="btn sm" @onclick="() => RestartAsync(c)">Redémarrer</button>
                         }
-                        else
+                        else if (CanAntenna)
                         {
                             <button class="btn sm live" @onclick="() => SetEnabled(c, true)">Allumer l'antenne</button>
                         }
                         <a class="btn sm" href="/conducteur/@c.Id">Conducteur</a>
-                        <button class="btn sm" @onclick="() => ToggleLog(c.Id)">Journal</button>
+                        <button class="btn sm" @onclick="() => ToggleLog(c.Id)">Journal moteur</button>
+                        <a class="btn sm" href="/journal/@c.Id">Diffusion</a>
                         <a class="btn sm" href="/live/@c.Id/index.m3u8" target="_blank" title="Lien HLS public">HLS</a>
                     </div>
                     @if (_openLogs.Contains(c.Id))
@@ -105,12 +106,16 @@ else
 }
 
 @code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+    private System.Security.Claims.ClaimsPrincipal _user = new();
+    private bool CanAntenna => Perm.Antenna(_user);
     private List<Channel>? _channels;
     private readonly HashSet<int> _openLogs = new();
     private DateTime _lastRender;
 
     protected override async Task OnInitializedAsync()
     {
+        if (AuthState is not null) _user = (await AuthState).User;
         await LoadAsync();
         Monitor.Updated += OnUpdated;
         Supervisor.Changed += OnUpdated;
@@ -134,8 +139,15 @@ else
             ? Math.Clamp(100 * (1 - (s.RemainingSeconds ?? 0) / total), 0, 100)
             : 0;
 
+    private Task RestartAsync(Channel c)
+    {
+        if (CanAntenna) Supervisor.Restart(c.Id);
+        return Task.CompletedTask;
+    }
+
     private async Task SetEnabled(Channel c, bool enabled)
     {
+        if (!CanAntenna) return;
         await using var db = await DbFactory.CreateDbContextAsync();
         var entity = await db.Channels.FindAsync(c.Id);
         if (entity is null) return;

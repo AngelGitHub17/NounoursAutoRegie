@@ -64,7 +64,7 @@ public sealed class IngestWorker(
         await db.SaveChangesAsync(ct);
         library.NotifyChanged();
 
-        if (!Network.SmbSources.IsSmb(asset.Path) && !File.Exists(asset.Path))
+        if (!Network.SmbSources.IsRemote(asset.Path) && !File.Exists(asset.Path))
         {
             asset.Status = AssetStatus.Absent;
             asset.Error = "Fichier introuvable";

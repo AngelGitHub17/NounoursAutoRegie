@@ -1,0 +1,149 @@
+@page "/journal"
+@page "/journal/{ChannelId:int}"
+@rendermode InteractiveServer
+@inject IDbContextFactory<NarDbContext> DbFactory
+@inject Microsoft.Extensions.Options.IOptions<NarOptions> Options
+@inject NavigationManager Nav
+@using System.Text.Json
+
+<PageTitle>Journal de diffusion — NounoursAutoRegie</PageTitle>
+
+<div class="row" style="margin-bottom:12px">
+    <div class="grow">
+        <h1>Journal de diffusion</h1>
+        <p class="lead" style="margin:0">Ce qui est réellement passé à l'antenne, à l'image près : débuts, fins, coupures, secours et incidents.</p>
+    </div>
+    @if (_channels.Count > 0)
+    {
+        <select value="@ChannelId" @onchange="ChangeChannel">
+            @foreach (var c in _channels) { <option value="@c.Id">@c.Number — @c.Name</option> }
+        </select>
+    }
+    <input type="date" @bind="Day" @bind:after="LoadAsync" />
+    <label class="check"><input type="checkbox" @bind="_onlyAir" @bind:after="LoadAsync" /> Passages seulement</label>
+</div>
+
+@if (_channels.Count == 0)
+{
+    <div class="panel muted">Aucune chaîne.</div>
+}
+else
+{
+    <div class="row muted small" style="margin-bottom:8px">
+        <span>@_rows.Count événement(s)</span>
+        @if (_errors > 0) { <span class="badge bad">@_errors incident(s)</span> }
+        @if (_fallbacks > 0) { <span class="badge warn">@_fallbacks passage(s) en secours</span> }
+    </div>
+    <div class="table-wrap">
+        <table class="grid">
+            <thead><tr><th>Heure</th><th>Timecode</th><th>Événement</th><th>Élément</th><th>Durée diffusée</th><th>Détail</th></tr></thead>
+            <tbody>
+                @foreach (var r in _rows)
+                {
+                    var (label, css) = EventLabel(r.Evt);
+                    <tr>
+                        <td class="num">@r.Time.ToLocalTime().ToString("HH:mm:ss")</td>
+                        <td class="num muted">@r.Timecode</td>
+                        <td><span class="badge @css">@label</span></td>
+                        <td>@r.Title</td>
+                        <td class="num">@(r.FramesPlayed is { } f && _fps > 0 ? Fmt.Duration(TimeSpan.FromSeconds(f / _fps)) : "")</td>
+                        <td class="small muted">@r.Detail</td>
+                    </tr>
+                }
+                @if (_rows.Count == 0)
+                {
+                    <tr><td colspan="6" class="muted">Rien pour ce jour.</td></tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    [Parameter] public int? ChannelId { get; set; }
+    private List<Channel> _channels = new();
+    private List<Row> _rows = new();
+    private double _fps;
+    private bool _onlyAir = true;
+    private int _errors, _fallbacks;
+    private DateTime Day { get; set; } = DateTime.Today;
+
+    private void ChangeChannel(ChangeEventArgs e) => Nav.NavigateTo("/journal/" + e.Value);
+
+    private sealed record Row(DateTimeOffset Time, string Timecode, string Evt, string? Id, string? Title, long? FramesPlayed, string? Detail);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _channels = await db.Channels.AsNoTracking().OrderBy(c => c.Number).ToListAsync();
+        if (ChannelId is null && _channels.Count > 0)
+        {
+            Nav.NavigateTo($"/journal/{_channels[0].Id}", replace: true);
+            return;
+        }
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _rows.Clear();
+        var channel = _channels.FirstOrDefault(c => c.Id == ChannelId);
+        if (channel is null) return;
+        _fps = NAR.Core.Media.FrameRate.Parse(channel.FrameRate).FramesPerSecond;
+
+        var dir = Path.Combine(Options.Value.ChannelDirectory(channel.Id), "asrun");
+        if (!Directory.Exists(dir)) return;
+        var rows = new List<Row>();
+        foreach (var file in Directory.EnumerateFiles(dir, $"*-{Day:yyyyMMdd}.jsonl"))
+        {
+            // Le moteur écrit en continu : lecture partagée.
+            await using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(stream);
+            while (await reader.ReadLineAsync() is { } line)
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(line);
+                    var r = doc.RootElement;
+                    rows.Add(new Row(
+                        r.GetProperty("time").GetDateTimeOffset(),
+                        r.TryGetProperty("timecode", out var tc) ? tc.GetString() ?? "" : "",
+                        r.GetProperty("evt").GetString() ?? "",
+                        r.TryGetProperty("id", out var id) ? id.GetString() : null,
+                        r.TryGetProperty("title", out var t) ? t.GetString() : null,
+                        r.TryGetProperty("framesPlayed", out var fp) && fp.ValueKind == JsonValueKind.Number ? fp.GetInt64() : null,
+                        r.TryGetProperty("detail", out var d) ? d.GetString() : null));
+                }
+                catch (JsonException) { /* ligne en cours d'écriture */ }
+            }
+        }
+        // Durée diffusée : reportée de la fin (ou coupure) sur le début du même passage.
+        rows = rows.OrderBy(r => r.Time).ToList();
+        var open = new Dictionary<string, int>();
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var r = rows[i];
+            if (r.Id is null) continue;
+            if (r.Evt == "start") open[r.Id] = i;
+            else if (r.Evt is "end" or "cut" or "stop" && open.Remove(r.Id, out var s))
+                rows[s] = rows[s] with { FramesPlayed = r.FramesPlayed };
+        }
+        _errors = rows.Count(r => r.Evt == "error");
+        _fallbacks = rows.Count(r => r.Evt == "fallback");
+        if (_onlyAir) rows = rows.Where(r => r.Evt is "start" or "cut" or "error" or "fallback" or "shutdown").ToList();
+        _rows = rows.OrderByDescending(r => r.Time).Take(2000).ToList();
+    }
+
+    private static (string, string) EventLabel(string evt) => evt switch
+    {
+        "start" => ("Début", "ok"),
+        "end" => ("Fin", "off"),
+        "cut" => ("Coupé", "warn"),
+        "error" => ("Incident", "bad"),
+        "fallback" => ("Secours", "warn"),
+        "reload" => ("Conducteur modifié", "info"),
+        "stop" => ("Arrêt", "off"),
+        "shutdown" => ("Moteur arrêté", "off"),
+        _ => (evt, "off"),
+    };
+}

@@ -96,4 +96,52 @@ public static class SmbRelay
             }
         }).AllowAnonymous();
     }
+
+    /// <summary>Relais vers Jellyfin : le fichier original, avec sauts, la clé API restant côté serveur.</summary>
+    public static void MapJellyfinRelay(this WebApplication app)
+    {
+        app.MapMethods("/interne/jellyfin/{assetId:int}/{name}", ["GET", "HEAD"], async (int assetId, HttpContext http, SmbSources sources, ILoggerFactory logs) =>
+        {
+            var remote = http.Connection.RemoteIpAddress;
+            if (remote is null || !IPAddress.IsLoopback(remote)) return Results.StatusCode(StatusCodes.Status403Forbidden);
+
+            var found = await sources.RemoteAssetAsync(assetId, Data.FolderSource.Jellyfin, http.RequestAborted);
+            if (found is not { } f) return Results.NotFound();
+
+            var client = sources.JellyfinOf(f.Folder);
+            using var request = client.Request(HttpMethods.IsHead(http.Request.Method) ? HttpMethod.Head : HttpMethod.Get,
+                client.StreamPath(SmbSources.JellyfinItemId(f.Asset)));
+            request.Headers.Accept.Clear();
+            if (http.Request.Headers.Range.Count > 0)
+                request.Headers.TryAddWithoutValidation("Range", http.Request.Headers.Range.ToString());
+
+            HttpResponseMessage response;
+            try
+            {
+                response = await http.RequestServices.GetRequiredService<IHttpClientFactory>().CreateClient("jellyfin-stream")
+                    .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, http.RequestAborted);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !http.RequestAborted.IsCancellationRequested)
+            {
+                logs.CreateLogger("JellyfinRelay").LogWarning("Jellyfin injoignable pour « {Title} » : {Error}", f.Asset.Title, ex.Message);
+                return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+            }
+
+            using (response)
+            {
+                http.Response.StatusCode = (int)response.StatusCode;
+                http.Response.Headers.AcceptRanges = "bytes";
+                http.Response.ContentType = "application/octet-stream";
+                if (response.Content.Headers.ContentLength is { } length) http.Response.ContentLength = length;
+                if (response.Content.Headers.ContentRange is { } range) http.Response.Headers.ContentRange = range.ToString();
+                if (!response.IsSuccessStatusCode || HttpMethods.IsHead(http.Request.Method)) return Results.Empty;
+                try
+                {
+                    await response.Content.CopyToAsync(http.Response.Body, http.RequestAborted);
+                }
+                catch (Exception ex) when (ex is OperationCanceledException or IOException or HttpRequestException) { }
+                return Results.Empty;
+            }
+        }).AllowAnonymous();
+    }
 }

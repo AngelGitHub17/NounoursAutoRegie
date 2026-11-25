@@ -167,4 +167,16 @@ public class ConductorTests
         Assert.Equal("D", conductor.Items[d.ItemIndex].Id);
         Assert.Equal(20, d.OffsetFrames);
     }
+
+    [Fact]
+    public void Horaire_fixe_entierement_passe_ne_coupe_pas_et_s_enchaine()
+    {
+        // Redémarrage à l'image 1000 : le spot calé à l'image 100 (10 images) est passé depuis longtemps.
+        var items = new[] { Keyed("A", 0, 50), Keyed("SPOT", 1, 10, fixedStart: 100), Keyed("B", 2, 50) };
+        var conductor = new Conductor(items, loop: true, preloadFrames: 5);
+        var first = conductor.Tick(1000, currentEnded: true);
+        Assert.Equal(ConductorAction.Start, first.Action);
+        for (long f = 1001; f < 1020; f++)
+            Assert.NotEqual(ConductorAction.Start, conductor.Tick(f, currentEnded: false).Action);
+    }
 }

@@ -11,7 +11,7 @@
         <h1>Chaînes</h1>
         <p class="lead" style="margin:0">Format d'antenne, encodage et bouche-trou de chaque chaîne.</p>
     </div>
-    <a class="btn primary" href="/chaines/nouvelle">+ Nouvelle chaîne</a>
+    <AuthorizeView Roles="@Roles.Admin"><a class="btn primary" href="/chaines/nouvelle">+ Nouvelle chaîne</a></AuthorizeView>
 </div>
 
 @if (_channels is null)

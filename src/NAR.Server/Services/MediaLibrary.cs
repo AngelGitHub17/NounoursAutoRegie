@@ -43,12 +43,22 @@ public sealed partial class MediaLibrary(
             List<(string Path, string Name, long Size, DateTime WriteUtc)> files;
             try
             {
+                if (folder.Source == FolderSource.Jellyfin)
+                {
+                    var result = await ScanJellyfinAsync(db, folder, ct);
+                    folder.LastScanError = null;
+                    folder.LastScanAt = DateTimeOffset.UtcNow;
+                    await db.SaveChangesAsync(ct);
+                    if (result.Added + result.Updated > 0) WorkAvailable?.Invoke();
+                    Changed?.Invoke();
+                    return result;
+                }
                 files = folder.Source == FolderSource.Smb
                     ? await Task.Run(() => ListSmb(folder), ct)
                     : ListLocal(folder);
                 folder.LastScanError = null;
             }
-            catch (Exception ex) when (ex is SmbException or IOException or UnauthorizedAccessException or System.Net.Sockets.SocketException)
+            catch (Exception ex) when (ex is SmbException or JellyfinException or IOException or UnauthorizedAccessException or System.Net.Sockets.SocketException)
             {
                 // Dossier injoignable (PC éteint…) : on ne déclare surtout pas tous ses médias absents.
                 folder.LastScanError = ex.Message.Length > 300 ? ex.Message[..300] : ex.Message;
@@ -116,6 +126,74 @@ public sealed partial class MediaLibrary(
             _scanLock.Release();
         }
     }
+
+    /// <summary>
+    /// Bibliothèque Jellyfin : un média par film ou épisode, avec ses métadonnées (série, saison,
+    /// épisode, résumé, année, classification). Titre : « Série — S01E02 — Épisode » pour les épisodes.
+    /// </summary>
+    private async Task<(int Added, int Updated, int Missing)> ScanJellyfinAsync(NarDbContext db, MediaFolder folder, CancellationToken ct)
+    {
+        var client = smb.JellyfinOf(folder);
+        var items = await client.ItemsAsync(folder.RemoteLibraryId ?? "", ct);
+        var known = await db.MediaAssets.Where(a => a.FolderId == folder.Id).ToDictionaryAsync(a => a.Path, ct);
+        var seen = new HashSet<string>();
+        int added = 0, updated = 0, missing = 0;
+
+        foreach (var item in items)
+        {
+            var path = SmbSources.JellyfinItemPath(folder.Id, item.Id);
+            seen.Add(path);
+            if (!known.TryGetValue(path, out var asset))
+            {
+                asset = new MediaAsset { FolderId = folder.Id, Path = path, Kind = KindOf(item, folder.DefaultKind) };
+                db.MediaAssets.Add(asset);
+                added++;
+            }
+            else if (asset.FileSize != item.Size || asset.FileModifiedUtc != item.ChangedUtc || asset.Status == AssetStatus.Absent)
+            {
+                asset.Status = AssetStatus.EnAttente;
+                updated++;
+            }
+
+            asset.ExternalId = item.Id;
+            asset.FileName = $"{item.Name}.{item.Container?.Split(',')[0] ?? "mkv"}";
+            asset.FileSize = item.Size;
+            asset.FileModifiedUtc = item.ChangedUtc;
+            asset.SeriesName = item.SeriesName;
+            asset.SeasonNumber = item.SeasonNumber;
+            asset.EpisodeNumber = item.EpisodeNumber;
+            asset.EpisodeTitle = item.Type == "Episode" ? item.Name : null;
+            asset.Year = item.Year;
+            asset.Overview = item.Overview is { Length: > 2000 } o ? o[..2000] : item.Overview;
+            asset.Rating = item.Rating;
+            asset.Genres = item.Genres.Length == 0 ? null : string.Join(", ", item.Genres);
+            asset.Title = item.Type == "Episode" && item.SeriesName is not null
+                ? $"{item.SeriesName} — S{item.SeasonNumber ?? 0:00}E{item.EpisodeNumber ?? 0:00} — {item.Name}"
+                : item.Year is { } y ? $"{item.Name} ({y})" : item.Name;
+            if (asset.Title.Length > 300) asset.Title = asset.Title[..300];
+        }
+
+        foreach (var asset in known.Values.Where(a => !seen.Contains(a.Path) && a.Status != AssetStatus.Absent))
+        {
+            asset.Status = AssetStatus.Absent;
+            asset.Error = "Retiré de Jellyfin";
+            missing++;
+        }
+
+        folder.LastScanCount = items.Count;
+        await db.SaveChangesAsync(ct);
+        logger.LogInformation("Jellyfin « {Library} » : {Added} ajouté(s), {Updated} modifié(s), {Missing} retiré(s)",
+            folder.RemoteLibraryName, added, updated, missing);
+        return (added, updated, missing);
+    }
+
+    private static AssetKind KindOf(JellyfinItem item, AssetKind fallback) => item.Type switch
+    {
+        "Movie" => AssetKind.Film,
+        "Episode" => AssetKind.Episode,
+        "MusicVideo" => AssetKind.Clip,
+        _ => fallback,
+    };
 
     private static List<(string, string, long, DateTime)> ListLocal(MediaFolder folder)
     {

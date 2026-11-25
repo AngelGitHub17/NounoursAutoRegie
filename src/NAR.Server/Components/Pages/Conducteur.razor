@@ -106,12 +106,15 @@ else if (_channel is not null)
                                     }
                                 </td>
                                 <td @onclick:stopPropagation="true">
+                                    @if (CanEdit)
+                                    {
                                     <div class="row" style="flex-wrap:nowrap">
                                         <button class="btn sm" disabled="@(index == 0)" @onclick="() => MoveAsync(index, -1)" title="Monter">▲</button>
                                         <button class="btn sm" disabled="@(index == _entries.Count - 1)" @onclick="() => MoveAsync(index, 1)" title="Descendre">▼</button>
                                         <button class="btn sm" @onclick="() => Edit(e)">Modifier</button>
                                         <button class="btn sm danger" @onclick="() => RemoveAsync(e)" title="Retirer">✕</button>
                                     </div>
+                                    }
                                 </td>
                             </tr>
                             @if (_edit is not null && _edit.Id == e.Id)
@@ -152,10 +155,16 @@ else if (_channel is not null)
             <div class="row" style="margin-top:10px">
                 <span class="muted">@_entries.Count élément(s) · durée totale <b class="mono">@Fmt.Timecode(_entries.Aggregate(TimeSpan.Zero, (t, e) => t + e.PlayedDuration))</b></span>
                 <span class="grow"></span>
-                <label class="check"><input type="checkbox" checked="@_channel.Loop" @onchange="ToggleLoopAsync" /> Recommencer au début à la fin (boucle)</label>
+                <label class="check"><input type="checkbox" checked="@_channel.Loop" disabled="@(!CanEdit)" @onchange="ToggleLoopAsync" /> Recommencer au début à la fin (boucle)</label>
             </div>
         </div>
 
+        @if (!CanEdit)
+        {
+            <div class="panel muted">Consultation seule : votre rôle ne permet pas de modifier le conducteur.</div>
+        }
+        else
+        {
         <div class="panel">
             <h2 style="margin-top:0">Ajouter</h2>
             <div class="row" style="margin-bottom:8px">
@@ -198,10 +207,14 @@ else if (_channel is not null)
                 }
             </div>
         </div>
+        }
     </div>
 }
 
 @code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthState { get; set; }
+    private System.Security.Claims.ClaimsPrincipal _user = new();
+    private bool CanEdit => Perm.Playlist(_user);
     [Parameter] public int? ChannelId { get; set; }
 
     private List<Channel> _channels = new();
@@ -230,6 +243,7 @@ else if (_channel is not null)
 
     protected override async Task OnInitializedAsync()
     {
+        if (AuthState is not null) _user = (await AuthState).User;
         Monitor.Updated += OnMonitor;
         await LoadPickerAsync();
     }
@@ -293,7 +307,7 @@ else if (_channel is not null)
         {
             var e = _entries[index];
             DateTimeOffset? fixedStart = k == 0 && anchorStart is not null ? anchorStart
-                : e.StartMode == StartMode.HeureFixe && e.FixedStart is { } fs ? fs : null;
+                : e.StartMode == StartMode.HeureFixe && e.FixedStart is { } fs && (anchorStart is null || fs > anchorStart) ? fs : null;
             return new PlanInput(e.Key, e.PlayedDuration, fixedStart);
         }).ToList();
         var planned = TimelinePlanner.Plan(inputs);
@@ -319,6 +333,7 @@ else if (_channel is not null)
 
     private async Task AddAsync(MediaAsset asset)
     {
+        if (!CanEdit) return;
         if (_channel is null) return;
         var insertAt = _selected is { } sel ? _entries.FindIndex(x => x.Id == sel) + 1 : _entries.Count;
         if (insertAt <= 0) insertAt = _entries.Count;
@@ -336,6 +351,7 @@ else if (_channel is not null)
 
     private async Task MoveAsync(int index, int delta)
     {
+        if (!CanEdit) return;
         if (_channel is null) return;
         await using var db = await DbFactory.CreateDbContextAsync();
         var entries = await db.PlaylistEntries.Where(e => e.ChannelId == _channel.Id).OrderBy(e => e.Position).ToListAsync();
@@ -349,6 +365,7 @@ else if (_channel is not null)
 
     private async Task RemoveAsync(PlaylistEntry entry)
     {
+        if (!CanEdit) return;
         if (_channel is null) return;
         await using var db = await DbFactory.CreateDbContextAsync();
         var entries = await db.PlaylistEntries.Where(e => e.ChannelId == _channel.Id).OrderBy(e => e.Position).ToListAsync();
@@ -374,6 +391,7 @@ else if (_channel is not null)
 
     private async Task SaveEditAsync()
     {
+        if (!CanEdit) return;
         if (_edit is null) return;
         if (!Fmt.TryParseTime(_edit.In, out var inPoint) || !Fmt.TryParseTime(_edit.Out, out var outPoint))
         {
@@ -403,6 +421,7 @@ else if (_channel is not null)
 
     private async Task ToggleLoopAsync(ChangeEventArgs e)
     {
+        if (!CanEdit) return;
         if (_channel is null) return;
         await using var db = await DbFactory.CreateDbContextAsync();
         var channel = await db.Channels.FindAsync(_channel.Id);

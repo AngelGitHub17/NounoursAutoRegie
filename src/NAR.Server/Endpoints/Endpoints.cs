@@ -45,7 +45,7 @@ public static class Endpoints
             await using var db = await dbFactory.CreateDbContextAsync();
             var channels = await db.Channels.AsNoTracking().Where(c => c.Enabled).OrderBy(c => c.Number).ToListAsync();
             var root = $"{http.Request.Scheme}://{http.Request.Host}";
-            var sb = new StringBuilder("#EXTM3U\n");
+            var sb = new StringBuilder($"#EXTM3U x-tvg-url=\"{root}/live/epg.xml\" url-tvg=\"{root}/live/epg.xml\"\n");
             foreach (var c in channels)
             {
                 sb.Append(CultureInfo.InvariantCulture, $"#EXTINF:-1 tvg-id=\"nar-{c.Id}\" tvg-chno=\"{c.Number}\" group-title=\"NounoursCorp\",{c.Name}\n");

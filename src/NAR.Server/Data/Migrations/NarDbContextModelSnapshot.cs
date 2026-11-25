@@ -146,8 +146,19 @@ namespace NAR.Server.Data.Migrations
                     b.Property<TimeSpan>("Duration")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("EpisodeNumber")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("EpisodeTitle")
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Error")
                         .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ExternalId")
+                        .HasMaxLength(64)
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("FileModifiedUtc")
@@ -171,6 +182,10 @@ namespace NAR.Server.Data.Migrations
                     b.Property<double>("GainDb")
                         .HasColumnType("REAL");
 
+                    b.Property<string>("Genres")
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
                     b.Property<bool>("HasAudio")
                         .HasColumnType("INTEGER");
 
@@ -186,9 +201,24 @@ namespace NAR.Server.Data.Migrations
                     b.Property<double?>("LoudnessLufs")
                         .HasColumnType("REAL");
 
+                    b.Property<string>("Overview")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Path")
                         .IsRequired()
                         .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Rating")
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("SeasonNumber")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SeriesName")
+                        .HasMaxLength(300)
                         .HasColumnType("TEXT");
 
                     b.Property<int>("Status")
@@ -206,6 +236,9 @@ namespace NAR.Server.Data.Migrations
                     b.Property<int>("Width")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int?>("Year")
+                        .HasColumnType("INTEGER");
+
                     b.HasKey("Id");
 
                     b.HasIndex("FolderId");
@@ -214,6 +247,8 @@ namespace NAR.Server.Data.Migrations
 
                     b.HasIndex("Path")
                         .IsUnique();
+
+                    b.HasIndex("SeriesName");
 
                     b.HasIndex("Status");
 
@@ -249,6 +284,22 @@ namespace NAR.Server.Data.Migrations
 
                     b.Property<bool>("Recursive")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("RemoteKeyProtected")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RemoteLibraryId")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RemoteLibraryName")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RemoteUrl")
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("SmbDomain")
                         .HasMaxLength(120)
