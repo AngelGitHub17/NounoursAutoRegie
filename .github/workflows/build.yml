@@ -1,12 +1,13 @@
 name: Build et release
 
 # - À chaque push / pull request : compilation + tests.
-# - À chaque tag vX.Y.Z : publication d'une release avec les binaires prêts à l'emploi
-#   (utilisés par le script Proxmox, qui n'a ainsi plus besoin du SDK .NET).
+# - Sur main : si la version de Directory.Build.props n'a pas encore de release,
+#   le workflow crée le tag vX.Y.Z et publie la release avec les binaires autonomes
+#   (utilisés par le script Proxmox, qui n'a ainsi besoin d'aucun SDK .NET).
+#   Pour sortir une nouvelle version : augmenter <Version> et pousser.
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -23,21 +24,28 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
+      - name: Version
+        id: version
+        run: |
+          VERSION="$(grep -oP '(?<=<Version>)[^<]+' Directory.Build.props)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version du projet : $VERSION"
+
       - name: Tests
         run: dotnet test -c Release
 
       - name: Publication linux-x64 et win-x64 (autonomes, runtime .NET inclus)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          [[ "$GITHUB_REF_TYPE" == "tag" ]] || VERSION="0.0.0-dev"
           for RID in linux-x64 win-x64; do
             OUT="dist/nounoursautoregie-$RID"
             dotnet publish src/NAR.Engine/NAR.Engine.csproj -c Release -r "$RID" --self-contained true \
-              -p:Version="${VERSION%%-*}" -p:InformationalVersion="$VERSION" -o "$OUT"
+              -p:Version="$VERSION" -p:InformationalVersion="$VERSION+${GITHUB_SHA::7}" -o "$OUT"
             mkdir -p "$OUT/scripts" "$OUT/samples"
             cp scripts/* "$OUT/scripts/"
             cp samples/*.json "$OUT/samples/"
-            echo "$GITHUB_REF_NAME ($GITHUB_SHA)" > "$OUT/VERSION"
+            echo "v$VERSION (${GITHUB_SHA::7})" > "$OUT/VERSION"
           done
           tar -C dist -czf dist/nounoursautoregie-linux-x64.tar.gz nounoursautoregie-linux-x64
           (cd dist && zip -qr nounoursautoregie-win-x64.zip nounoursautoregie-win-x64)
@@ -49,10 +57,26 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
 
+      - name: Release déjà publiée ?
+        id: exists
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "La release v${{ steps.version.outputs.version }} existe déjà : rien à publier."
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: steps.exists.outputs.publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.version.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: NounoursAutoRegie ${{ steps.version.outputs.version }}
           files: |
             dist/nounoursautoregie-linux-x64.tar.gz
             dist/nounoursautoregie-win-x64.zip
