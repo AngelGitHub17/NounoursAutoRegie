@@ -36,7 +36,28 @@ dotnet run -c Release --project src/NAR.Engine -- "$(pwd)/samples/channel.test.j
 
 Pour une vraie chaîne, copiez `samples/channel.example.json` (1080p25, commenté) et adaptez le conducteur.
 
-### Sur le Proxmox (Docker)
+### Sur le Proxmox : conteneur LXC en une commande (recommandé)
+
+Le script suit le format des [Proxmox VE Helper-Scripts](https://community-scripts.github.io/ProxmoxVE/) : même menu, mêmes réglages (CPU, RAM, disque, réseau). Dans le **shell de l'hôte Proxmox** :
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/AngelGitHub17/NounoursAutoRegie/main/proxmox/ct/nounoursautoregie.sh)"
+```
+
+Le conteneur (Ubuntu 24.04, 4 cœurs, 4 Go, 20 Go par défaut) compile NounoursAutoRegie, génère des médias de test et démarre une **chaîne de test 1080p25** en service `systemd`. Ensuite :
+
+| Quoi | Où |
+| --- | --- |
+| Page de contrôle | `http://<ip-du-conteneur>:8090` |
+| Flux HLS | `http://<ip-du-conteneur>:8090/hls/index.m3u8` |
+| Configuration de la chaîne | `/etc/nounoursautoregie/channel.json` puis `systemctl restart nounoursautoregie` |
+| Médias, HLS, journal de diffusion | `/var/lib/nounoursautoregie/` |
+| Journaux du moteur | `journalctl -u nounoursautoregie -f` |
+| Mise à jour | relancer la commande ci-dessus **dans la console du conteneur** (ou taper `update`) |
+
+Pour utiliser vos vrais médias, montez un dossier de l'hôte dans le conteneur (`pct set <id> -mp0 /chemin/hôte,mp=/media`) et pointez le conducteur dessus.
+
+### Sur le Proxmox : Docker
 
 ```bash
 cd docker
