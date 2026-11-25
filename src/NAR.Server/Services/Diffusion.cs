@@ -94,6 +94,14 @@ public sealed class Diffusion
     public string PublicM3uUrl => $"{PublicBase}/live/chaines.m3u?cle={Uri.EscapeDataString(Key)}";
     public string SiteStreamUrl(int channelId) => $"{Settings.SiteUrl}/nar.php?c={channelId}";
 
+    /// <summary>Lien de test du relais (mesure la liaison régie → site), protégé par une empreinte de la clé.</summary>
+    public string SiteDiagUrl(int channelId) =>
+        $"{Settings.SiteUrl}/nar.php?c={channelId}&diag={Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Key))).ToLowerInvariant()[..16]}";
+
+    /// <summary>Réglage conseillé pour passer par Internet : segments de 4 s, débit modéré.</summary>
+    public static (int Segment, int Kbps) InternetProfile(int height) =>
+        (4, height >= 2160 ? 12000 : height >= 1080 ? 3500 : height >= 720 ? 2500 : 1500);
+
     private string NewKey()
     {
         var key = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
@@ -169,6 +177,39 @@ $c = (int)($_GET['c'] ?? 0);
 $seg = (string)($_GET['seg'] ?? '');
 if ($c <= 0 || $c > 9999) nar_fail(400, 'chaîne invalide');
 
+// ── Diagnostic (lien « Tester le relais » de la page Diffusion) ─────
+// Mesure la liaison régie → site : un segment doit arriver nettement plus vite qu'il ne dure.
+if (isset($_GET['diag'])) {
+    if (!hash_equals(substr(hash('sha256', NAR_KEY), 0, 16), (string)$_GET['diag'])) nar_fail(403, 'lien de test invalide');
+    header('Content-Type: text/plain; charset=utf-8');
+    $t = microtime(true);
+    $r = nar_fetch(NAR_BASE . '/live/' . $c . '/index.m3u8?cle=' . rawurlencode(NAR_KEY), 10);
+    $ms = (int)round((microtime(true) - $t) * 1000);
+    if ($r['err'] || $r['code'] != 200) exit("Playlist : ÉCHEC — " . nar_detail($r) . "\n");
+    echo "Playlist : reçue en $ms ms\n";
+    preg_match('/#EXT-X-TARGETDURATION:(\d+)/', $r['body'], $m);
+    $dur = (int)($m[1] ?? 2);
+    $segs = array_values(array_filter(explode("\n", $r['body']), fn($l) => $l !== '' && $l[0] !== '#'));
+    $total = 0.0; $bytes = 0; $n = 0;
+    foreach (array_slice($segs, -4, 3) as $line) {
+        $name = basename(parse_url(trim($line), PHP_URL_PATH) ?: '');
+        $t = microtime(true);
+        $s = nar_fetch(NAR_BASE . '/live/' . $c . '/' . $name . '?cle=' . rawurlencode(NAR_KEY), 30);
+        $sec = microtime(true) - $t;
+        if ($s['err'] || $s['code'] != 200) { echo "Segment $name : ÉCHEC — " . nar_detail($s) . "\n"; continue; }
+        $len = strlen($s['body']); $total += $sec; $bytes += $len; $n++;
+        printf("Segment %s : %.1f Mo en %.2f s (%.1f Mbit/s) pour %d s de vidéo\n", $name, $len / 1048576, $sec, $len * 8 / max($sec, 0.001) / 1e6, $dur);
+    }
+    if ($n === 0) exit("\nAucun segment reçu.\n");
+    $ratio = ($total / $n) / max($dur, 1);
+    $need = $bytes * 8 / $n / max($dur, 1) / 1e6;
+    printf("\nDébit de la chaîne : %.1f Mbit/s par spectateur. Chaque segment arrive en %d %% de sa durée.\n", $need, (int)round($ratio * 100));
+    echo $ratio < 0.4 ? "Verdict : liaison confortable.\n"
+        : ($ratio < 0.8 ? "Verdict : ça passe, mais sans grande marge (plusieurs spectateurs ou un ralentissement provoqueront des coupures). Utilise le « réglage Internet » de la page Diffusion.\n"
+        : "Verdict : trop lent, les coupures viennent de là. Baisse le débit vidéo de la chaîne (page Diffusion → « réglage Internet ») ; vérifie aussi le débit montant de ta box.\n");
+    exit;
+}
+
 // La chaîne du site dont l'adresse de flux pointe ici : ce sont ses règles qui s'appliquent.
 $channel = null;
 foreach (channels_all() as $ch) {
@@ -194,23 +235,75 @@ if (!empty($channel['is_adult']) && !$is18 && !$isAdmin) nar_fail(403, 'contenu 
 
 $key = '?cle=' . rawurlencode(NAR_KEY);
 
+// Cache partagé entre spectateurs (hors du dossier web : les segments n'y sont pas accessibles
+// directement). Dix spectateurs = un seul envoi depuis la maison.
+$cache = sys_get_temp_dir() . '/nar-cache/' . $c;
+if (!is_dir($cache) && !@mkdir($cache, 0700, true)) $cache = null;
+if ($cache && mt_rand(1, 20) === 1) {
+    foreach (glob($cache . '/*') ?: [] as $f) { if (@filemtime($f) < time() - 120) @unlink($f); }
+}
+
 // ── Segment vidéo ────────────────────────────────────────────────
 if ($seg !== '') {
     if (!preg_match('/^seg_\d+\.ts$/', $seg)) nar_fail(400, 'segment invalide');
-    $r = nar_fetch(NAR_BASE . '/live/' . $c . '/' . $seg . $key, 20);
-    if ($r['err'] || $r['code'] != 200) nar_fail(502, 'segment indisponible : ' . nar_detail($r));
-    header('Content-Type: video/MP2T');
-    header('Cache-Control: public, max-age=60');
-    header('Content-Length: ' . strlen($r['body']));
-    echo $r['body'];
+    $file = $cache ? $cache . '/' . $seg : null;
+    if ($file) {
+        // Un autre spectateur est déjà en train de le récupérer : on l'attend (8 s au plus).
+        $t0 = microtime(true);
+        while (!is_file($file) && is_file($file . '.part') && time() - (int)@filemtime($file . '.part') < 10 && microtime(true) - $t0 < 8) usleep(100000);
+        if (is_file($file)) {
+            header('Content-Type: video/MP2T');
+            header('Cache-Control: public, max-age=60');
+            header('Content-Length: ' . filesize($file));
+            readfile($file);
+            exit;
+        }
+    }
+    // Transmis au fil de l'eau : le lecteur reçoit les premiers octets sans attendre la fin du segment.
+    while (ob_get_level()) ob_end_clean();
+    $fp = $file ? @fopen($file . '.part', 'wb') : false;
+    $ok = false;
+    $ch = curl_init(NAR_BASE . '/live/' . $c . '/' . $seg . $key);
+    curl_setopt_array($ch, [
+        CURLOPT_CONNECTTIMEOUT => 5, CURLOPT_TIMEOUT => 25,
+        CURLOPT_WRITEFUNCTION => function ($ch, $data) use (&$fp, &$ok) {
+            if (curl_getinfo($ch, CURLINFO_HTTP_CODE) != 200) return 0;
+            if (!$ok) {
+                $ok = true;
+                header('Content-Type: video/MP2T');
+                header('Cache-Control: public, max-age=60');
+                $size = curl_getinfo($ch, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T);
+                if ($size > 0) header('Content-Length: ' . (int)$size);
+            }
+            if ($fp) fwrite($fp, $data);
+            echo $data;
+            flush();
+            return strlen($data);
+        },
+    ]);
+    $done = curl_exec($ch);
+    $r = ['err' => curl_error($ch), 'code' => curl_getinfo($ch, CURLINFO_HTTP_CODE), 'body' => ''];
+    curl_close($ch);
+    if ($fp) {
+        fclose($fp);
+        if ($done && $ok) @rename($file . '.part', $file); else @unlink($file . '.part');
+    }
+    if (!$ok) nar_fail(502, 'segment indisponible : ' . nar_detail($r));
     exit;
 }
 
-// ── Playlist ─────────────────────────────────────────────────────
-$r = nar_fetch(NAR_BASE . '/live/' . $c . '/index.m3u8' . $key, 10);
-if ($r['err'] || $r['code'] != 200 || !$r['body']) nar_fail(502, 'playlist indisponible : ' . nar_detail($r));
+// ── Playlist (gardée 1 s : tous les spectateurs partagent la même lecture) ──
+$pl = $cache ? $cache . '/index.m3u8' : null;
+if ($pl && is_file($pl) && microtime(true) - filemtime($pl) < 1.0) {
+    $body = file_get_contents($pl);
+} else {
+    $r = nar_fetch(NAR_BASE . '/live/' . $c . '/index.m3u8' . $key, 10);
+    if ($r['err'] || $r['code'] != 200 || !$r['body']) nar_fail(502, 'playlist indisponible : ' . nar_detail($r));
+    $body = $r['body'];
+    if ($pl) { @file_put_contents($pl . '.tmp', $body); @rename($pl . '.tmp', $pl); }
+}
 $out = [];
-foreach (explode("\n", trim($r['body'])) as $line) {
+foreach (explode("\n", trim($body)) as $line) {
     $line = rtrim($line);
     if ($line === '' || $line[0] === '#') { $out[] = $line; continue; }
     $name = basename(parse_url($line, PHP_URL_PATH) ?: '');

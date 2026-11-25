@@ -48,7 +48,7 @@ public class Channel
     [MaxLength(32)] public string? EncoderPreset { get; set; } = "veryfast";
     public int VideoBitrateKbps { get; set; } = 6000;
     public int AudioBitrateKbps { get; set; } = 160;
-    public int SegmentSeconds { get; set; } = 2;
+    public int SegmentSeconds { get; set; } = 4;
 
     /// <summary>Port local du moteur (statut + HLS, joint par NAR.Server uniquement).</summary>
     public int EnginePort { get; set; }

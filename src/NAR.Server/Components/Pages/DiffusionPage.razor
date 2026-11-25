@@ -4,6 +4,7 @@
 @inject IDbContextFactory<NarDbContext> DbFactory
 @inject Diffusion Diffusion
 @inject NavigationManager Nav
+@inject EngineSupervisor Supervisor
 
 <PageTitle>Diffusion — NounoursAutoRegie</PageTitle>
 
@@ -51,7 +52,7 @@
     <p class="small">Administration → Chaînes IPTV → nouvelle chaîne de type <b>Flux externe</b>, avec ces deux adresses :</p>
     <div class="table-wrap">
         <table class="grid">
-            <thead><tr><th>Chaîne</th><th>Adresse du flux (.m3u8)</th><th>Guide XMLTV</th></tr></thead>
+            <thead><tr><th>Chaîne</th><th>Adresse du flux (.m3u8)</th><th>Guide XMLTV</th><th>Réglage Internet</th></tr></thead>
             <tbody>
                 @foreach (var c in _channels)
                 {
@@ -59,11 +60,26 @@
                         <td>@c.Number · @c.Name</td>
                         <td class="small mono" style="user-select:all;word-break:break-all">@Diffusion.SiteStreamUrl(c.Id)</td>
                         <td class="small mono" style="user-select:all;word-break:break-all">@(string.IsNullOrEmpty(Diffusion.PublicBase) ? "—" : Diffusion.PublicEpgUrl(c.Id))</td>
+                        <td class="small">
+                            @{ var (seg, kbps) = Diffusion.InternetProfile(c.Height); }
+                            <div>Segments @c.SegmentSeconds s · @c.VideoBitrateKbps kb/s</div>
+                            @if (c.SegmentSeconds < seg || c.VideoBitrateKbps > kbps)
+                            {
+                                <button class="btn sm primary" style="margin-top:4px" @onclick="() => ApplyInternet(c)">Passer à @seg s · @kbps kb/s</button>
+                            }
+                            else
+                            {
+                                <span class="badge ok">adapté</span>
+                            }
+                            <div style="margin-top:4px"><a href="@Diffusion.SiteDiagUrl(c.Id)" target="_blank" rel="noopener">Tester le relais ↗</a></div>
+                        </td>
                     </tr>
                 }
             </tbody>
         </table>
     </div>
+
+    <p class="small muted">Chaque spectateur reçoit le débit vidéo de la chaîne depuis ta box, en passant par le site. Le <b>réglage Internet</b> (segments de 4 s et débit modéré) donne aux lecteurs plus de marge et soulage ta connexion. Il relance le moteur de la chaîne : quelques secondes de coupure. <b>Tester le relais</b> (une fois nar.php déposé) mesure la liaison entre ta régie et le site.</p>
 
     <h2>Lecteurs IPTV (VLC, TiviMate…)</h2>
     <p class="small">Sur ton réseau : <span class="mono" style="user-select:all">http://@_host:@Diffusion.LocalPort/live/chaines.m3u</span><br />
@@ -91,6 +107,20 @@
         Diffusion.Save(_settings);
         _settings = Diffusion.Settings;
         (_message, _ok) = ("Réglages enregistrés. Si tu avais déjà déposé nar.php, télécharge-le à nouveau.", true);
+    }
+
+    private async Task ApplyInternet(Channel c)
+    {
+        var (seg, kbps) = Diffusion.InternetProfile(c.Height);
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.Channels.FindAsync(c.Id);
+        if (entity is null) return;
+        entity.SegmentSeconds = Math.Max(entity.SegmentSeconds, seg);
+        entity.VideoBitrateKbps = Math.Min(entity.VideoBitrateKbps, kbps);
+        await db.SaveChangesAsync();
+        (c.SegmentSeconds, c.VideoBitrateKbps) = (entity.SegmentSeconds, entity.VideoBitrateKbps);
+        Supervisor.Wake();
+        (_message, _ok) = ($"« {c.Name} » : segments de {entity.SegmentSeconds} s, {entity.VideoBitrateKbps} kb/s. Le moteur redémarre (quelques secondes).", true);
     }
 
     private void Regenerate()

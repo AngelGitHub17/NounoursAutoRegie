@@ -92,6 +92,7 @@ public static class Endpoints
                     await http.Response.WriteAsync(string.Join('\n', lines), http.RequestAborted);
                     return Results.Empty;
                 }
+                if (response.Content.Headers.ContentLength is { } length) http.Response.ContentLength = length;
                 await response.Content.CopyToAsync(http.Response.Body, http.RequestAborted);
                 return Results.Empty;
             }
