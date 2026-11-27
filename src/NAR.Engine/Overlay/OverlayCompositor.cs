@@ -204,7 +204,7 @@ public sealed class OverlayCompositor : IDisposable
         }
     }
 
-    private static SKBitmap TrimTransparent(SKBitmap bitmap)
+    internal static SKBitmap TrimTransparent(SKBitmap bitmap)
     {
         int w = bitmap.Width, h = bitmap.Height;
         int left = w, top = h, right = -1, bottom = -1;

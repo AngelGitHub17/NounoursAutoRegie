@@ -60,7 +60,22 @@ else if (_channel is not null)
                         <tr><th>Heure</th><th>Durée</th><th>Titre</th><th>Type</th><th>Départ</th><th></th></tr>
                     </thead>
                     <tbody>
-                        @for (var i = 0; i < _entries.Count; i++)
+                        @{
+                            // Fenêtre d'affichage : un long conducteur (grille sur plusieurs jours) n'est pas
+                            // affiché d'un bloc, seulement autour de l'élément à l'antenne.
+                            var onAirIndex = status?.CurrentId is { } cid ? _entries.FindIndex(x => x.Key == cid) : -1;
+                            var from = _viewFrom ?? Math.Max(0, onAirIndex - 5);
+                            from = Math.Clamp(from, 0, Math.Max(0, _entries.Count - 1));
+                            var to = Math.Min(_entries.Count, from + _viewCount);
+                        }
+                        @if (from > 0)
+                        {
+                            <tr><td colspan="6" class="small muted">
+                                @from élément(s) plus tôt ·
+                                <a href="javascript:void(0)" @onclick="() => _viewFrom = Math.Max(0, from - ViewStep)">afficher les précédents</a>
+                            </td></tr>
+                        }
+                        @for (var i = from; i < to; i++)
                         {
                             var e = _entries[i];
                             var index = i;
@@ -151,6 +166,13 @@ else if (_channel is not null)
                                     </td>
                                 </tr>
                             }
+                        }
+                        @if (to < _entries.Count)
+                        {
+                            <tr><td colspan="6" class="small muted">
+                                @(_entries.Count - to) élément(s) plus tard ·
+                                <a href="javascript:void(0)" @onclick="() => { _viewFrom = from; _viewCount += ViewStep; }">afficher la suite</a>
+                            </td></tr>
                         }
                         @if (_entries.Count == 0)
                         {
@@ -315,6 +337,8 @@ else if (_channel is not null)
 
     protected override async Task OnParametersSetAsync()
     {
+        _viewFrom = null;
+        _viewCount = ViewStep;
         await using var db = await DbFactory.CreateDbContextAsync();
         _channels = await db.Channels.AsNoTracking().OrderBy(c => c.Number).ThenBy(c => c.Name).ToListAsync();
         _loaded = true;
@@ -393,6 +417,10 @@ else if (_channel is not null)
         if (Enum.TryParse<AssetKind>(PickerKind, out var kind)) q = q.Where(a => a.Kind == kind);
         _picker = await q.OrderBy(a => a.Title).Take(150).ToListAsync();
     }
+
+    private const int ViewStep = 150;
+    private int? _viewFrom;
+    private int _viewCount = ViewStep;
 
     // --- Programmes types -------------------------------------------------------------------
     private List<ProgrammeType> _ptTypes = new();

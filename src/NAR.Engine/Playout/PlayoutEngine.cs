@@ -85,7 +85,11 @@ public sealed class PlayoutEngine(
         var lastEncoderStart = Stopwatch.GetTimestamp();
         long encoderRestarts = 0;
 
-        var slate = Slate.CreateColorBars(format);
+        // Carton d'excuse (logo de la chaîne) ; la mire de barres ne sert plus qu'en dernier recours.
+        string? slateLogo = config.Overlays.Logo is { } lp ? config.Resolve(lp) + "|" + config.Overlays.LogoVersion : null;
+        var slate = ApologySlate.Create(format, config.Overlays.Logo is { } l0 ? config.Resolve(l0) : null, config.Name, _logger);
+        var apologyShown = false;
+        long frozenFrames = 0;
         var video = new byte[format.VideoFrameBytes];
         // Image habillée : copie de l'image source (qui peut être figée et resservie) + incrustations.
         var dressed = new byte[format.VideoFrameBytes];
@@ -148,6 +152,8 @@ public sealed class PlayoutEngine(
         OverlayContext OverlayContextAt(long f)
         {
             var wall = epoch + rate.TimeFromFrames(f);
+            if (apologyShown)
+                return new OverlayContext(wall, OnAir: false, Overlay: false, IsProgramme: false, Rating: null, 0, 0, null, null);
             if (currentItem is null)
                 return new OverlayContext(wall, OnAir: state == AntennaState.Filler, Overlay: state == AntennaState.Filler,
                     IsProgramme: false, Rating: null, ElapsedSeconds: 10, RemainingSeconds: 10, null, null);
@@ -187,6 +193,12 @@ public sealed class PlayoutEngine(
             items = next.Items;
             conductor.Reload(items, next.Loop);
             overlays.Configure(next.Config.Overlays, next.Config.Resolve);
+            var logoKey = next.Config.Overlays.Logo is { } nl ? next.Config.Resolve(nl) + "|" + next.Config.Overlays.LogoVersion : null;
+            if (logoKey != slateLogo)
+            {
+                slateLogo = logoKey;
+                slate = ApologySlate.Create(format, next.Config.Overlays.Logo is { } l1 ? next.Config.Resolve(l1) : null, next.Config.Name, _logger);
+            }
 
             // Les préchargements devenus inutiles (élément retiré ou modifié) sont libérés.
             var keep = items.Select(Key).ToHashSet();
@@ -358,6 +370,8 @@ public sealed class PlayoutEngine(
                     if (ReferenceEquals(source, current)) currentShown++;
                     state = current is not null ? AntennaState.Playing : AntennaState.Filler;
                     underrun = 0;
+                    frozenFrames = 0;
+                    apologyShown = false;
                 }
                 else
                 {
@@ -390,10 +404,21 @@ public sealed class PlayoutEngine(
                     }
                     else if (source is null)
                     {
-                        if (state != AntennaState.Slate) Buffer.BlockCopy(slate, 0, video, 0, slate.Length);
+                        if (state != AntennaState.Slate || !apologyShown) Buffer.BlockCopy(slate, 0, video, 0, slate.Length);
                         state = AntennaState.Slate;
+                        apologyShown = true;
                     }
                     // source en cours terminée : le conducteur enchaîne à l'image suivante (image figée d'ici là).
+
+                    // Image figée depuis 10 s (programme introuvable, réseau en panne, nouveaux essais) :
+                    // le carton d'excuse remplace l'image arrêtée jusqu'au retour du programme.
+                    if (++frozenFrames >= fps * 10 && !apologyShown)
+                    {
+                        Buffer.BlockCopy(slate, 0, video, 0, slate.Length);
+                        apologyShown = true;
+                        lastIncident = $"{DateTimeOffset.Now:HH:mm:ss} image figée depuis 10 s : carton d'excuse";
+                        _logger.LogWarning("{Tc} Image figée depuis 10 s : carton « Désolé, votre programme ne peut pas être diffusé »", rate.ToTimecode(frame));
+                    }
                 }
 
                 // --- Envoi à l'encodeur ----------------------------------------------------

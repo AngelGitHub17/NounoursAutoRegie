@@ -59,7 +59,10 @@ builder.Logging.AddFilter("Microsoft.Hosting.Lifetime", LogLevel.Warning);
 builder.Logging.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.Warning);
 builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
 
-builder.Services.AddDbContextFactory<NarDbContext>(o => o.UseSqlite($"Data Source={Path.Combine(dataDir, "nar.db")}"));
+builder.Services.AddSingleton<DataVersion>();
+builder.Services.AddDbContextFactory<NarDbContext>((sp, o) => o
+    .UseSqlite($"Data Source={Path.Combine(dataDir, "nar.db")};Default Timeout=30")
+    .AddInterceptors(sp.GetRequiredService<DataVersion>()));
 builder.Services.AddDataProtection()
     .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(dataDir, "keys")))
     .SetApplicationName("NounoursAutoRegie");
@@ -115,6 +118,8 @@ var app = builder.Build();
 await using (var db = await app.Services.GetRequiredService<IDbContextFactory<NarDbContext>>().CreateDbContextAsync())
 {
     await db.Database.MigrateAsync();
+    // Journal WAL : les lectures (pages, moteurs) ne sont plus bloquées pendant une écriture.
+    db.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
 }
 await app.Services.GetRequiredService<Seeder>().SeedAsync();
 await app.Services.GetRequiredService<ProgrammeTypes>().SeedAsync();

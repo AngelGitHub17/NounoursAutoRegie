@@ -84,6 +84,14 @@ public class Channel
     /// <summary>Types de médias utilisés pour combler les trous entre deux cases (séparés par des virgules).</summary>
     [MaxLength(200)] public string RemplissageKinds { get; set; } = "BandeAnnonce,Clip";
 
+    // Enchaînement automatique avant chaque case de la grille :
+    // jingle d'entrée pub → écran pub → jingle de sortie pub → jingle Rétro 95 du programme.
+    public bool EnchainementActif { get; set; }
+    public int? JinglePubDebutId { get; set; }
+    public int EnchainementPubSeconds { get; set; } = 120;
+    public int? JinglePubFinId { get; set; }
+    public bool EnchainementJingleProgramme { get; set; } = true;
+
     public int? FillerAssetId { get; set; }
     public MediaAsset? FillerAsset { get; set; }
 
@@ -388,6 +396,9 @@ public class GrilleCase
     public MediaAsset? Asset { get; set; }
 
     public bool Active { get; set; } = true;
+
+    /// <summary>Démarre à la fin de la case précédente (pas d'heure fixe) : aucun trou.</summary>
+    public bool ALaSuite { get; set; }
 
     public static int Bit(DayOfWeek d) => 1 << (((int)d + 6) % 7);
 }

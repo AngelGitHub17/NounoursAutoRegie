@@ -253,7 +253,7 @@ public sealed partial class ProgrammeTypes(IDbContextFactory<NarDbContext> dbFac
         .OrderBy(a => a.SeasonNumber ?? int.MaxValue).ThenBy(a => a.EpisodeNumber ?? int.MaxValue).ThenBy(a => a.Title, StringComparer.OrdinalIgnoreCase)
         .ToList();
 
-    private static async Task<MediaAsset?> FindCreationAsync(NarDbContext db, MediaAsset programme, int atelierKind, CancellationToken ct)
+    public static async Task<MediaAsset?> FindCreationAsync(NarDbContext db, MediaAsset programme, int atelierKind, CancellationToken ct)
     {
         var creations = (await db.AtelierCreations.AsNoTracking()
                 .Where(c => c.Kind == atelierKind && c.Status == CreationStatus.Pret && c.AssetId != null)

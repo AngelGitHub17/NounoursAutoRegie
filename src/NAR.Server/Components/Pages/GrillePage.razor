@@ -6,13 +6,14 @@
 @inject ProgrammeTypes Types
 @inject EngineSupervisor Supervisor
 @inject NavigationManager Nav
+@inject IJSRuntime JS
 
 <PageTitle>Grille — NounoursAutoRegie</PageTitle>
 
 <div class="row" style="margin-bottom:12px">
     <div class="grow">
         <h1>Grille de la semaine</h1>
-        <p class="lead" style="margin:0">Tes rendez-vous (« Film du soir tous les jours à 20:50 »). La régie programme le conducteur sur les jours à venir, comble les trous entre les cases et fait avancer les séries.</p>
+        <p class="lead" style="margin:0">Glisse un programme type sur un jour, à l'heure voulue. Déposé juste après un autre, il s'y colle (« à la suite ») : pas de trou. La régie programme le conducteur, enchaîne pubs et jingles, comble les trous et fait avancer les séries.</p>
     </div>
     @if (_channels.Count > 0)
     {
@@ -33,108 +34,187 @@
 
 @if (_channel is not null)
 {
-    <div class="layout-2">
-        <div class="panel">
-            <h2 style="margin-top:0">Cases</h2>
-            <div class="table-wrap">
-                <table class="grid pt-blocs">
-                    <thead><tr><th>Jours</th><th>Heure</th><th>Programme type</th><th>Série / film</th><th>Active</th><th></th></tr></thead>
-                    <tbody>
-                        @foreach (var c in _cases.OrderBy(c => c.Heure))
-                        {
-                            var slot = c;
-                            var type = _types.FirstOrDefault(t => t.Id == slot.ProgrammeTypeId);
-                            <tr @key="slot">
-                                <td>
-                                    <div class="row" style="gap:2px;flex-wrap:nowrap">
-                                        @for (var d = 0; d < 7; d++)
-                                        {
-                                            var bit = 1 << d;
-                                            <button class="btn sm @((slot.Jours & bit) != 0 ? "primary" : "")" style="min-width:28px;padding:2px 4px" disabled="@(!CanEdit)"
-                                                    @onclick="() => slot.Jours ^= bit">@DayLetters[d]</button>
-                                        }
-                                    </div>
-                                </td>
-                                <td><input type="time" value="@slot.Heure.ToString(@"hh\:mm")" @onchange="e => SetTime(slot, e)" disabled="@(!CanEdit)" /></td>
-                                <td>
-                                    <select @bind="slot.ProgrammeTypeId" disabled="@(!CanEdit)">
-                                        @foreach (var t in _types) { <option value="@t.Id">@t.Name</option> }
-                                    </select>
-                                </td>
-                                <td>
-                                    @if (type is not null && type.Blocs.Any(b => b.Type == BlocType.EpisodeSuivant && string.IsNullOrWhiteSpace(b.SeriesName)))
-                                    {
-                                        <select @bind="slot.SeriesName" disabled="@(!CanEdit)">
-                                            <option value="">— série —</option>
-                                            @foreach (var s in _series) { <option value="@s">@s</option> }
-                                        </select>
-                                    }
-                                    @if (type?.Blocs.FirstOrDefault(b => b.Type == BlocType.AuChoix) is { } choix)
-                                    {
-                                        <select @bind="slot.AssetId" disabled="@(!CanEdit)">
-                                            <option value="">@Fmt.Kind(choix.Kind ?? AssetKind.Film) au hasard</option>
-                                            @foreach (var a in _assets.Where(a => choix.Kind == null || a.Kind == choix.Kind)) { <option value="@a.Id">@a.Title</option> }
-                                        </select>
-                                    }
-                                </td>
-                                <td><input type="checkbox" @bind="slot.Active" disabled="@(!CanEdit)" /></td>
-                                <td>@if (CanEdit) { <button class="btn sm danger" @onclick="() => _cases.Remove(slot)">✕</button> }</td>
-                            </tr>
-                        }
-                        @if (_cases.Count == 0)
-                        {
-                            <tr><td colspan="6" class="muted">Aucune case. Ajoutez votre premier rendez-vous.</td></tr>
-                        }
-                    </tbody>
-                </table>
+    <div class="planner-layout">
+        @* --- Palette ----------------------------------------------------------------- *@
+        <div class="panel planner-palette">
+            <h2 style="margin-top:0">Blocs</h2>
+            <p class="small muted">À glisser sur la grille.</p>
+            @foreach (var t in _types)
+            {
+                var type = t;
+                <div class="palette-item" draggable="@(CanEdit ? "true" : "false")" style="border-left-color:@ColorOf(type.Id)"
+                     @ondragstart="() => StartNew(type)" @ondragend="EndDrag">
+                    <b>@type.Name</b>
+                    <div class="small muted">~ @Fmt.Duration(EstimateType(type, null))</div>
+                </div>
+            }
+            @if (_types.Count == 0)
+            {
+                <p class="small">Aucun programme type.</p>
+            }
+            <a class="small" href="/programmes-types">+ Créer / modifier les programmes types</a>
+        </div>
+
+        @* --- Semaine ------------------------------------------------------------------ *@
+        <div class="panel" style="padding:0;overflow:hidden">
+            <div class="planner-head">
+                <div class="planner-gutter"></div>
+                @for (var d = 0; d < 7; d++) { <div class="planner-dayname">@DayNames[d]</div> }
             </div>
+            <div class="planner-scroll" id="planner-scroll">
+                <div class="planner-body" style="height:@(Px(1440))px">
+                    <div class="planner-gutter">
+                        @for (var h = 0; h < 24; h++) { <div class="planner-hour" style="top:@(Px(h * 60))px">@h.ToString("00"):00</div> }
+                    </div>
+                    @for (var d = 0; d < 7; d++)
+                    {
+                        var day = d;
+                        <div class="planner-day @(_drag is not null ? "dragging" : "")"
+                             ondragover="narPlannerOver(event, this)" @ondrop="() => DropAsync(day)" @ondrop:preventDefault="true">
+                            @for (var h = 0; h < 24; h++) { <div class="planner-line" style="top:@(Px(h * 60))px"></div> }
+                            @foreach (var b in Layout(day))
+                            {
+                                var block = b;
+                                var t = _types.FirstOrDefault(x => x.Id == block.Case.ProgrammeTypeId);
+                                <div class="planner-block @(_selected == block.Case ? "selected" : "") @(block.Case.Active ? "" : "inactive")"
+                                     style="top:@(Px(block.Start))px;height:@(Math.Max(18, Px(block.Duration) - 2))px;border-left-color:@ColorOf(block.Case.ProgrammeTypeId)"
+                                     draggable="@(CanEdit ? "true" : "false")" @ondragstart="() => StartMove(block.Case)" @ondragend="EndDrag"
+                                     @onclick="() => Select(block.Case)" title="@Tooltip(block)">
+                                    <span class="mono">@Clock(block.Start)</span>@(block.Case.ALaSuite ? " ↧" : "") <b>@t?.Name</b>
+                                    @if (Px(block.Duration) > 34) { <div class="small">@Detail(block.Case)</div> }
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        @* --- Case sélectionnée + réglages ------------------------------------------- *@
+        <div>
+            <div class="panel" style="margin-bottom:16px">
+                @if (_selected is { } s)
+                {
+                    var st = _types.FirstOrDefault(x => x.Id == s.ProgrammeTypeId);
+                    <h2 style="margin-top:0">Case</h2>
+                    <label class="field"><span>Programme type</span>
+                        <select @bind="s.ProgrammeTypeId" disabled="@(!CanEdit)">
+                            @foreach (var t in _types) { <option value="@t.Id">@t.Name</option> }
+                        </select>
+                    </label>
+                    <label class="check" style="margin-top:8px"><input type="checkbox" @bind="s.ALaSuite" disabled="@(!CanEdit)" /> À la suite de la case précédente</label>
+                    @if (!s.ALaSuite)
+                    {
+                        <label class="field" style="margin-top:8px"><span>Heure</span>
+                            <input type="time" value="@s.Heure.ToString(@"hh\:mm")" @onchange="e => SetTime(s, e)" disabled="@(!CanEdit)" />
+                        </label>
+                    }
+                    <div class="field" style="margin-top:8px"><span>Jours</span>
+                        <div class="row" style="gap:2px;flex-wrap:nowrap">
+                            @for (var d = 0; d < 7; d++)
+                            {
+                                var bit = 1 << d;
+                                <button class="btn sm @((s.Jours & bit) != 0 ? "primary" : "")" style="min-width:30px;padding:2px 4px" disabled="@(!CanEdit)"
+                                        @onclick="() => s.Jours ^= bit">@DayLetters[d]</button>
+                            }
+                        </div>
+                        <div class="row" style="gap:4px;margin-top:4px">
+                            <button class="btn sm" disabled="@(!CanEdit)" @onclick="() => s.Jours = 127">Tous les jours</button>
+                            <button class="btn sm" disabled="@(!CanEdit)" @onclick="() => s.Jours = 31">Lun–Ven</button>
+                            <button class="btn sm" disabled="@(!CanEdit)" @onclick="() => s.Jours = 96">Week-end</button>
+                        </div>
+                    </div>
+                    @if (st is not null && st.Blocs.Any(b => b.Type == BlocType.EpisodeSuivant && string.IsNullOrWhiteSpace(b.SeriesName)))
+                    {
+                        <label class="field" style="margin-top:8px"><span>Série</span>
+                            <select @bind="s.SeriesName" disabled="@(!CanEdit)">
+                                <option value="">— choisir —</option>
+                                @foreach (var se in _series) { <option value="@se">@se</option> }
+                            </select>
+                        </label>
+                    }
+                    @if (st?.Blocs.FirstOrDefault(b => b.Type == BlocType.AuChoix) is { } choix)
+                    {
+                        <label class="field" style="margin-top:8px"><span>@(string.IsNullOrWhiteSpace(choix.Label) ? "Média" : choix.Label)</span>
+                            <select @bind="s.AssetId" disabled="@(!CanEdit)">
+                                <option value="">@Fmt.Kind(choix.Kind ?? AssetKind.Film) au hasard à chaque diffusion</option>
+                                @foreach (var a in _assets.Where(a => choix.Kind == null || a.Kind == choix.Kind)) { <option value="@a.Id">@a.Title</option> }
+                            </select>
+                        </label>
+                    }
+                    <label class="check" style="margin-top:8px"><input type="checkbox" @bind="s.Active" disabled="@(!CanEdit)" /> Active</label>
+                    <p class="small muted" style="margin:8px 0 0">Durée estimée : @Fmt.Duration(Estimate(s))</p>
+                    @if (CanEdit)
+                    {
+                        <div class="row" style="margin-top:10px">
+                            <button class="btn sm danger" @onclick="() => { _cases.Remove(s); _selected = null; }">Retirer la case</button>
+                            <button class="btn sm" @onclick="() => _selected = null">Fermer</button>
+                        </div>
+                    }
+                }
+                else
+                {
+                    <h2 style="margin-top:0">Case</h2>
+                    <p class="small muted">Clique sur une case de la grille pour la régler (série, film, jours, heure).</p>
+                }
+            </div>
+
             @if (CanEdit)
             {
-                <div class="row" style="margin-top:10px">
-                    <button class="btn" disabled="@(_types.Count == 0)" @onclick="AddCase">+ Ajouter une case</button>
-                    @if (_types.Count == 0) { <span class="small muted">Créez d'abord un <a href="/programmes-types">programme type</a>.</span> }
+                <div class="panel" style="margin-bottom:16px">
+                    <div class="row">
+                        <button class="btn primary" @onclick="SaveAsync">Enregistrer</button>
+                        <button class="btn" @onclick="() => GenerateAsync(false)" title="Ajoute ce qui manque sur l'horizon, sans toucher au reste">Programmer maintenant</button>
+                    </div>
+                    <button class="btn danger" style="margin-top:8px" @onclick="() => GenerateAsync(true)" title="Refait toutes les cases à venir (sauf celle des 10 prochaines minutes)">@(_confirmRegen ? "Confirmer : refaire les cases à venir" : "Refaire les cases à venir")</button>
                 </div>
 
-                <h2>Réglages</h2>
-                <div class="form-grid">
-                    <label class="check"><input type="checkbox" @bind="_channel.GrilleActive" /> Programmation automatique (toutes les 10 min, sans boucle)</label>
-                    <label class="field"><span>Programmer à l'avance</span>
+                <div class="panel" style="margin-bottom:16px">
+                    <h2 style="margin-top:0">Enchaînement</h2>
+                    <label class="check"><input type="checkbox" @bind="_channel.EnchainementActif" /> Avant chaque case : pubs et jingles automatiques</label>
+                    @if (_channel.EnchainementActif)
+                    {
+                        <label class="field" style="margin-top:8px"><span>Jingle d'entrée pub</span>
+                            <select @bind="_channel.JinglePubDebutId">
+                                <option value="">— aucun —</option>
+                                @foreach (var a in _jingles) { <option value="@a.Id">@a.Title</option> }
+                            </select>
+                        </label>
+                        <label class="field" style="margin-top:8px"><span>Écran pub</span>
+                            <select @bind="_channel.EnchainementPubSeconds">
+                                <option value="0">Pas de pub</option>
+                                @foreach (var sec in new[] { 30, 60, 90, 120, 180, 240, 300, 420, 600 }) { <option value="@sec">@Fmt.Duration(TimeSpan.FromSeconds(sec))</option> }
+                            </select>
+                        </label>
+                        <label class="field" style="margin-top:8px"><span>Jingle de sortie pub</span>
+                            <select @bind="_channel.JinglePubFinId">
+                                <option value="">— aucun —</option>
+                                @foreach (var a in _jingles) { <option value="@a.Id">@a.Title</option> }
+                            </select>
+                        </label>
+                        <label class="check" style="margin-top:8px"><input type="checkbox" @bind="_channel.EnchainementJingleProgramme" /> Puis le jingle Rétro 95 du programme (atelier)</label>
+                        <p class="small muted" style="margin:6px 0 0">L'enchaînement passe juste avant l'heure de la case. Ce que le programme type contient déjà (écran pub, jingle) n'est pas doublé.</p>
+                    }
+                </div>
+
+                <div class="panel">
+                    <h2 style="margin-top:0">Réglages</h2>
+                    <label class="check"><input type="checkbox" @bind="_channel.GrilleActive" /> Programmation automatique</label>
+                    <label class="field" style="margin-top:8px"><span>Programmer à l'avance</span>
                         <select @bind="_channel.GrilleHorizonJours">
                             @for (var j = 1; j <= 7; j++) { <option value="@j">@j jour(s)</option> }
                         </select>
                     </label>
-                </div>
-                <p class="small muted" style="margin:12px 0 6px">Remplissage entre deux cases (médias tirés au sort qui tiennent dans le trou ; le reste est couvert par le bouche-trou) :</p>
-                <div class="row" style="flex-wrap:wrap;gap:10px">
-                    @foreach (var k in FillKinds)
-                    {
-                        var kind = k;
-                        <label class="check"><input type="checkbox" checked="@_fill.Contains(kind)" @onchange="e => ToggleFill(kind, e)" /> @Fmt.Kind(kind)</label>
-                    }
-                </div>
-
-                <div class="row" style="margin-top:18px">
-                    <button class="btn primary" @onclick="SaveAsync">Enregistrer</button>
-                    <button class="btn" @onclick="() => GenerateAsync(false)" title="Ajoute ce qui manque sur l'horizon, sans toucher au reste">Programmer maintenant</button>
-                    <span class="grow"></span>
-                    <button class="btn danger" @onclick="() => GenerateAsync(true)" title="Refait toutes les cases à venir (sauf celle des 10 prochaines minutes)">@(_confirmRegen ? "Confirmer : refaire les cases à venir" : "Refaire les cases à venir")</button>
+                    <p class="small muted" style="margin:10px 0 6px">Remplissage des trous :</p>
+                    <div class="row" style="flex-wrap:wrap;gap:8px">
+                        @foreach (var k in FillKinds)
+                        {
+                            var kind = k;
+                            <label class="check"><input type="checkbox" checked="@_fill.Contains(kind)" @onchange="e => ToggleFill(kind, e)" /> @Fmt.Kind(kind)</label>
+                        }
+                    </div>
                 </div>
             }
-        </div>
-
-        <div class="panel">
-            <h2 style="margin-top:0">Prochains rendez-vous</h2>
-            @foreach (var o in _upcoming)
-            {
-                var t = _types.FirstOrDefault(x => x.Id == o.Case.ProgrammeTypeId);
-                <div class="row" style="flex-wrap:nowrap;padding:4px 0;border-bottom:1px solid var(--line)">
-                    <span class="mono small" style="min-width:110px">@Grille.When(o.Start)</span>
-                    <span class="grow">@t?.Name@(o.Case.SeriesName is { Length: > 0 } s ? $" · {s}" : "")@(o.Case.AssetId is { } aid ? $" · {_assets.FirstOrDefault(a => a.Id == aid)?.Title}" : "")</span>
-                    @if (_programmed.Contains(o.Key)) { <span class="badge ok" title="Déjà au conducteur">au conducteur</span> }
-                </div>
-            }
-            @if (_upcoming.Count == 0) { <p class="muted small">Aucun rendez-vous sur les 7 prochains jours.</p> }
-            <p class="small muted" style="margin-top:10px"><a href="/conducteur/@_channel.Id">Voir le conducteur</a></p>
         </div>
     </div>
 }
@@ -149,7 +229,11 @@ else if (_loaded)
     private System.Security.Claims.ClaimsPrincipal _user = new();
     private bool CanEdit => Perm.Playlist(_user);
 
+    private const double PxPerMinute = 0.9;
+    private static int Px(double minutes) => (int)Math.Round(minutes * PxPerMinute);
     private static readonly string[] DayLetters = ["L", "M", "M", "J", "V", "S", "D"];
+    private static readonly string[] DayNames = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"];
+    private static readonly string[] Colors = ["#FF3200", "#FFA800", "#008A22", "#4f8cff", "#8C0A11", "#b05cff", "#00a6a6", "#E1E8CD"];
     private static readonly AssetKind[] FillKinds = [AssetKind.BandeAnnonce, AssetKind.Clip, AssetKind.Habillage, AssetKind.Spot, AssetKind.Programme, AssetKind.Film, AssetKind.Episode, AssetKind.Autre];
 
     private List<Channel> _channels = new();
@@ -157,23 +241,44 @@ else if (_loaded)
     private List<GrilleCase> _cases = new();
     private List<ProgrammeType> _types = new();
     private List<MediaAsset> _assets = new();
+    private List<MediaAsset> _jingles = new();
     private List<string> _series = new();
     private HashSet<AssetKind> _fill = new();
-    private List<GrilleOccurrence> _upcoming = new();
-    private HashSet<string> _programmed = new();
     private List<string> _warnings = new();
     private string? _message;
-    private bool _ok, _loaded, _confirmRegen;
+    private bool _ok, _loaded, _confirmRegen, _scrolled;
+    private GrilleCase? _selected;
+
+    // Durées pour l'estimation des blocs.
+    private readonly Dictionary<AssetKind, TimeSpan> _medianByKind = new();
+    private readonly Dictionary<string, TimeSpan> _medianBySeries = new();
+    private readonly Dictionary<int, TimeSpan> _assetDuration = new();
+
+    // Glisser-déposer.
+    private object? _drag;               // ProgrammeType (nouveau) ou GrilleCase (déplacement)
+
+    private sealed record Block(GrilleCase Case, double Start, double Duration);
 
     protected override async Task OnInitializedAsync()
     {
         if (AuthState is not null) _user = (await AuthState).User;
         await using var db = await DbFactory.CreateDbContextAsync();
         _types = await db.ProgrammeTypes.AsNoTracking().Include(t => t.Blocs).OrderBy(t => t.Name).ToListAsync();
-        _assets = await db.MediaAssets.AsNoTracking()
-            .Where(a => a.Status == AssetStatus.Pret && (a.Kind == AssetKind.Film || a.Kind == AssetKind.Programme || a.Kind == AssetKind.Episode || a.Kind == AssetKind.Clip))
-            .OrderBy(a => a.Title).Take(2000).ToListAsync();
+        var ready = (await db.MediaAssets.AsNoTracking().Where(a => a.Status == AssetStatus.Pret).ToListAsync())
+            .Where(a => a.Duration > TimeSpan.Zero).ToList();
+        _assets = ready.Where(a => a.Kind is AssetKind.Film or AssetKind.Programme or AssetKind.Episode or AssetKind.Clip)
+            .OrderBy(a => a.Title).Take(3000).ToList();
+        _jingles = ready.Where(a => a.Kind is AssetKind.Jingle or AssetKind.Habillage).OrderBy(a => a.Title).ToList();
+        foreach (var a in ready) _assetDuration[a.Id] = a.Duration;
+        foreach (var g in ready.GroupBy(a => a.Kind)) _medianByKind[g.Key] = Median(g.Select(a => a.Duration));
+        foreach (var g in ready.Where(a => a.SeriesName != null).GroupBy(a => a.SeriesName!)) _medianBySeries[g.Key] = Median(g.Select(a => a.Duration));
         _series = await Types.SeriesAsync();
+    }
+
+    private static TimeSpan Median(IEnumerable<TimeSpan> values)
+    {
+        var list = values.OrderBy(v => v).ToList();
+        return list.Count == 0 ? TimeSpan.Zero : list[list.Count / 2];
     }
 
     protected override async Task OnParametersSetAsync()
@@ -189,7 +294,21 @@ else if (_loaded)
         _channel = _channels.FirstOrDefault(c => c.Id == ChannelId);
         _message = null;
         _warnings.Clear();
+        _selected = null;
         await LoadAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Ouverture sur la fin d'après-midi, là où se trouvent d'habitude les rendez-vous.
+        if (!_scrolled && _channel is not null)
+        {
+            _scrolled = true;
+            var first = _cases.Count > 0 ? _cases.Min(c => c.Heure.TotalMinutes) : 17 * 60;
+            try { await JS.InvokeVoidAsync("narScrollTo", "planner-scroll", Px(Math.Max(0, Math.Min(first, 17 * 60) - 30))); }
+            catch (JSException) { }
+            catch (InvalidOperationException) { }
+        }
     }
 
     private async Task LoadAsync()
@@ -199,21 +318,140 @@ else if (_loaded)
         _cases = await db.GrilleCases.AsNoTracking().Where(c => c.ChannelId == _channel.Id).ToListAsync();
         _fill = _channel.RemplissageKinds.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(k => Enum.TryParse<AssetKind>(k, out var kind) ? kind : (AssetKind?)null).OfType<AssetKind>().ToHashSet();
-        _programmed = (await db.PlaylistEntries.AsNoTracking().Where(e => e.ChannelId == _channel.Id && e.GroupKey != null)
-            .Select(e => e.GroupKey!).Distinct().ToListAsync()).ToHashSet();
-        RefreshUpcoming();
     }
 
-    private void RefreshUpcoming() =>
-        _upcoming = Grille.Occurrences(_cases, DateTimeOffset.Now, DateTimeOffset.Now.AddDays(7)).Take(30).ToList();
+    // --- Estimations et disposition -----------------------------------------------------
+
+    private TimeSpan EstimateType(ProgrammeType type, GrilleCase? slot)
+    {
+        var total = TimeSpan.Zero;
+        foreach (var b in type.Blocs)
+        {
+            total += b.Type switch
+            {
+                BlocType.Media => b.AssetId is { } id && _assetDuration.TryGetValue(id, out var d) ? d : TimeSpan.Zero,
+                BlocType.AuChoix when slot?.AssetId is { } chosen && _assetDuration.TryGetValue(chosen, out var c) => c,
+                BlocType.AuChoix or BlocType.AuHasard => _medianByKind.GetValueOrDefault(b.Kind ?? AssetKind.Film, TimeSpan.FromMinutes(30)),
+                BlocType.EpisodeSuivant => (_medianBySeries.TryGetValue(b.SeriesName ?? slot?.SeriesName ?? "", out var e) ? e
+                    : _medianByKind.GetValueOrDefault(AssetKind.Episode, TimeSpan.FromMinutes(26))) * Math.Max(1, b.Count),
+                BlocType.EcranPub => TimeSpan.FromSeconds(b.DurationSeconds ?? 120),
+                BlocType.HabillageDuProgramme => TimeSpan.FromSeconds(15),
+                _ => TimeSpan.Zero,
+            };
+        }
+        if (_channel is { EnchainementActif: true } ch)
+        {
+            if (type.Blocs.All(b => b.Type != BlocType.EcranPub)) total += TimeSpan.FromSeconds(ch.EnchainementPubSeconds + (ch.EnchainementPubSeconds > 0 ? 10 : 0));
+            if (ch.EnchainementJingleProgramme && type.Blocs.All(b => b.Type != BlocType.HabillageDuProgramme)) total += TimeSpan.FromSeconds(15);
+        }
+        return total;
+    }
+
+    private TimeSpan Estimate(GrilleCase c) =>
+        _types.FirstOrDefault(t => t.Id == c.ProgrammeTypeId) is { } t ? EstimateType(t, c) : TimeSpan.FromMinutes(30);
+
+    /// <summary>Cases d'un jour, dans l'ordre ; une case « à la suite » se place à la fin de la précédente.</summary>
+    private List<Block> Layout(int day)
+    {
+        var bit = 1 << day;
+        var list = new List<Block>();
+        double end = 0;
+        foreach (var c in _cases.Where(c => (c.Jours & bit) != 0).OrderBy(c => c.Heure))
+        {
+            var start = c.ALaSuite && list.Count > 0 ? end : c.Heure.TotalMinutes;
+            var duration = Math.Max(5, Estimate(c).TotalMinutes);
+            list.Add(new Block(c, start, duration));
+            end = start + duration;
+        }
+        return list;
+    }
+
+    private static string Clock(double minutes)
+    {
+        var m = (int)Math.Round(minutes) % 1440;
+        return $"{m / 60:00}:{m % 60:00}";
+    }
+
+    private string Detail(GrilleCase c) =>
+        !string.IsNullOrWhiteSpace(c.SeriesName) ? c.SeriesName!
+        : c.AssetId is { } id ? _assets.FirstOrDefault(a => a.Id == id)?.Title ?? ""
+        : "";
+
+    private string Tooltip(Block b) =>
+        $"{Clock(b.Start)} → {Clock(b.Start + b.Duration)} · {Grille.Jours(b.Case.Jours)}{(b.Case.ALaSuite ? " · à la suite" : "")}";
+
+    private string ColorOf(int typeId)
+    {
+        var index = _types.FindIndex(t => t.Id == typeId);
+        return Colors[(index < 0 ? 0 : index) % Colors.Length];
+    }
+
+    // --- Glisser-déposer ------------------------------------------------------------------
+
+    private void StartNew(ProgrammeType type) => _drag = type;
+
+    private void StartMove(GrilleCase c)
+    {
+        _drag = c;
+        _selected = c;
+    }
+
+    private void EndDrag() => _drag = null;
+
+    /// <summary>Heure de dépose : arrondie à 5 min, collée à la fin d'un bloc s'il finit juste avant.</summary>
+    private (double Minute, bool Snaps) SnapFor(int day, double minute, GrilleCase? moving)
+    {
+        minute = Math.Clamp(Math.Round(minute / 5) * 5, 0, 1435);
+        var blocks = Layout(day).Where(b => b.Case != moving).ToList();
+        var before = blocks.Where(b => b.Start <= minute).OrderBy(b => b.Start).LastOrDefault();
+        if (before is not null)
+        {
+            var end = before.Start + before.Duration;
+            // Un bloc court est affiché plus haut que sa durée : on compte jusqu'à son bas visible.
+            var visualEnd = Math.Max(end, before.Start + 18 / PxPerMinute);
+            if (minute >= end - 1 && minute - visualEnd <= 15) return (end, true);
+            if (minute < end) return (end, true); // déposé sur un bloc : juste après lui
+        }
+        return (minute, false);
+    }
+
+    private async Task DropAsync(int day)
+    {
+        // L'élément glissé est gardé : la fin du glisser (dragend) peut arriver pendant l'appel au navigateur.
+        var drag = _drag;
+        if (!CanEdit || drag is null || _channel is null) { EndDrag(); return; }
+        // Hauteur de dépose mesurée dans le navigateur, par rapport à la colonne du jour.
+        double y;
+        try { y = await JS.InvokeAsync<double>("narPlannerY"); }
+        catch (JSException) { EndDrag(); return; }
+        var (minute, snaps) = SnapFor(day, y / PxPerMinute, drag as GrilleCase);
+        var time = TimeSpan.FromMinutes(Math.Round(minute));
+        if (time >= TimeSpan.FromDays(1)) time = new TimeSpan(23, 55, 0);
+        switch (drag)
+        {
+            case ProgrammeType type:
+                var c = new GrilleCase { ChannelId = _channel.Id, ProgrammeTypeId = type.Id, Jours = 1 << day, Heure = time, ALaSuite = snaps, Active = true };
+                _cases.Add(c);
+                _selected = c;
+                break;
+            case GrilleCase moving:
+                moving.Heure = time;
+                moving.ALaSuite = snaps;
+                if ((moving.Jours & (moving.Jours - 1)) == 0) moving.Jours = 1 << day; // une seule journée : on la change
+                else if ((moving.Jours & (1 << day)) == 0) moving.Jours |= 1 << day;
+                _selected = moving;
+                break;
+        }
+        _message = "Grille modifiée : pensez à enregistrer.";
+        _ok = true;
+        EndDrag();
+    }
+
+    // --- Édition et enregistrement -----------------------------------------------------------
 
     private void ChangeChannel(ChangeEventArgs e) => Nav.NavigateTo("/grille/" + e.Value);
 
-    private void AddCase()
-    {
-        if (_channel is null || _types.Count == 0) return;
-        _cases.Add(new GrilleCase { ChannelId = _channel.Id, ProgrammeTypeId = _types[0].Id, Heure = new TimeSpan(20, 50, 0), Jours = 127 });
-    }
+    private void Select(GrilleCase c) => _selected = c;
 
     private void SetTime(GrilleCase slot, ChangeEventArgs e)
     {
@@ -229,11 +467,22 @@ else if (_loaded)
     {
         if (!CanEdit || _channel is null) return false;
         if (_cases.Any(c => (c.Jours & 127) == 0)) { (_message, _ok) = ("Chaque case doit avoir au moins un jour.", false); return false; }
+
+        // Les cases « à la suite » gardent comme heure leur place estimée : c'est elle qui fixe l'ordre.
+        for (var d = 0; d < 7; d++)
+            foreach (var b in Layout(d).Where(b => b.Case.ALaSuite))
+                b.Case.Heure = TimeSpan.FromMinutes(Math.Min(1439, Math.Round(b.Start)));
+
         await using var db = await DbFactory.CreateDbContextAsync();
         var channel = await db.Channels.FirstAsync(c => c.Id == _channel.Id);
         channel.GrilleActive = _channel.GrilleActive;
         channel.GrilleHorizonJours = Math.Clamp(_channel.GrilleHorizonJours, 1, 7);
         channel.RemplissageKinds = string.Join(",", _fill);
+        channel.EnchainementActif = _channel.EnchainementActif;
+        channel.JinglePubDebutId = _channel.JinglePubDebutId;
+        channel.EnchainementPubSeconds = _channel.EnchainementPubSeconds;
+        channel.JinglePubFinId = _channel.JinglePubFinId;
+        channel.EnchainementJingleProgramme = _channel.EnchainementJingleProgramme;
         if (channel.GrilleActive) channel.Loop = false;
 
         var existing = await db.GrilleCases.Where(c => c.ChannelId == channel.Id).ToListAsync();
@@ -248,10 +497,13 @@ else if (_loaded)
             entity.SeriesName = string.IsNullOrWhiteSpace(c.SeriesName) ? null : c.SeriesName;
             entity.AssetId = c.AssetId;
             entity.Active = c.Active;
+            entity.ALaSuite = c.ALaSuite;
         }
         await db.SaveChangesAsync();
         _channel.Loop = channel.Loop;
+        var selectedKey = _selected is { } sel ? (sel.ProgrammeTypeId, sel.Heure, sel.Jours) : default;
         await LoadAsync();
+        _selected = _selected is null ? null : _cases.FirstOrDefault(c => (c.ProgrammeTypeId, c.Heure, c.Jours) == selectedKey);
         return true;
     }
 
@@ -281,6 +533,5 @@ else if (_loaded)
         {
             (_message, _ok) = (ex.Message, false);
         }
-        await LoadAsync();
     }
 }

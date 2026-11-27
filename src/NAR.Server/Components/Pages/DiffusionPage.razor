@@ -49,10 +49,10 @@
     }
 
     <h2>4. Chaînes à créer dans Nounours.TV</h2>
-    <p class="small">Administration → Chaînes IPTV → nouvelle chaîne de type <b>Flux externe</b>, avec ces deux adresses :</p>
+    <p class="small">Administration → Chaînes IPTV → nouvelle chaîne de type <b>Flux externe</b>, avec l'adresse du flux, celle du guide et l'identifiant du guide (champ « tvg-id » / « ID EPG ») :</p>
     <div class="table-wrap">
         <table class="grid">
-            <thead><tr><th>Chaîne</th><th>Adresse du flux (.m3u8)</th><th>Guide XMLTV</th><th>Réglage Internet</th></tr></thead>
+            <thead><tr><th>Chaîne</th><th>Adresse du flux (.m3u8)</th><th>Guide XMLTV</th><th>Identifiant guide (tvg-id)</th><th>Réglage Internet</th></tr></thead>
             <tbody>
                 @foreach (var c in _channels)
                 {
@@ -60,6 +60,7 @@
                         <td>@c.Number · @c.Name</td>
                         <td class="small mono" style="user-select:all;word-break:break-all">@Diffusion.SiteStreamUrl(c.Id)</td>
                         <td class="small mono" style="user-select:all;word-break:break-all">@(string.IsNullOrEmpty(Diffusion.PublicBase) ? "—" : Diffusion.PublicEpgUrl(c.Id))</td>
+                        <td class="small mono" style="user-select:all">nar-@c.Id</td>
                         <td class="small">
                             @{ var (seg, kbps) = Diffusion.InternetProfile(c.Height); }
                             <div>Segments @c.SegmentSeconds s · @c.VideoBitrateKbps kb/s</div>

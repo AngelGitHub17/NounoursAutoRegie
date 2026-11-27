@@ -81,3 +81,13 @@ window.narPlayer = {
     video._nar = null;
   },
 };
+
+// Défilement d'un conteneur (grille de la semaine).
+window.narScrollTo = (id, y) => { const el = document.getElementById(id); if (el) el.scrollTop = y; };
+
+// Grille de la semaine : hauteur de la souris dans la colonne du jour pendant le glisser-déposer.
+window.narPlannerOver = (e, column) => {
+  e.preventDefault();
+  window._narPlannerY = e.clientY - column.getBoundingClientRect().top;
+};
+window.narPlannerY = () => window._narPlannerY ?? 0;

@@ -177,31 +177,50 @@ public sealed class Grille(IDbContextFactory<NarDbContext> dbFactory, ProgrammeT
             warnings.AddRange(expansion.Warnings.Select(w => $"{label} : {w}"));
             if (expansion.Items.Count == 0) continue;
 
-            // Trou depuis la fin de la case précédente : comblé par du remplissage qui tient dedans.
+            // Enchaînement automatique (jingle pub, pubs, jingle fin de pub, jingle du programme) : il se
+            // place juste avant la case, pour que le programme démarre pile à son heure.
+            var transition = await TransitionAsync(db, channel, type, expansion, ct);
+            var transitionDuration = transition.Aggregate(TimeSpan.Zero, (t, a) => t + a.Duration);
+
             var previous = spans.Where(s => s.Start < occ.Start).OrderBy(s => s.Start).LastOrDefault();
+            // « À la suite » : la case démarre dès la fin de la précédente (transition comprise), sans trou.
+            var start = occ.Start;
+            if (occ.Case.ALaSuite && previous != default && previous.End > now)
+            {
+                start = previous.End + transitionDuration;
+                label = $"{When(start)} « {type.Name} »";
+            }
+
+            // Trou depuis la fin de la case précédente : comblé par du remplissage qui tient dedans.
             var filler = new List<MediaAsset>();
             if (previous != default)
             {
-                if (previous.End > occ.Start)
-                    warnings.Add($"{label} : la case précédente déborde de {Components.Shared.Fmt.Duration(previous.End - occ.Start)} (elle sera coupée).");
-                var gap = occ.Start - (previous.End > now ? previous.End : now);
+                if (previous.End > start - transitionDuration + TimeSpan.FromSeconds(1))
+                    warnings.Add($"{label} : la case précédente déborde de {Components.Shared.Fmt.Duration(previous.End - (start - transitionDuration))} (elle sera coupée).");
+                var gap = start - transitionDuration - (previous.End > now ? previous.End : now);
                 if (gap > TimeSpan.FromSeconds(5))
                 {
                     var left = gap;
-                    // Tours successifs du stock (bandes-annonces d'abord) : un long trou (la nuit…) est rempli
-                    // en repassant les médias, jamais deux fois de suite le même.
-                    for (var round = 0; round < 50 && left >= TimeSpan.FromSeconds(5) && filler.Count < 400; round++)
+                    // Remplissage : le moins d'éléments possible. Dans un long trou on prend de préférence
+                    // des médias longs (films, épisodes), puis on finit avec des courts (bandes-annonces,
+                    // clips) ; jamais deux fois de suite le même, 120 éléments au plus par trou.
+                    var used = new HashSet<int>();
+                    while (left >= TimeSpan.FromSeconds(5) && filler.Count < 120)
                     {
-                        var before = filler.Count;
-                        var candidates = pool.OrderBy(a => a.Kind == AssetKind.BandeAnnonce ? 0 : 1).ThenBy(_ => Random.Shared.Next()).ToList();
-                        foreach (var a in candidates)
-                        {
-                            if (a.Duration > left || (filler.Count > 0 && filler[^1].Id == a.Id)) continue;
-                            filler.Add(a);
-                            left -= a.Duration;
-                            if (left < TimeSpan.FromSeconds(5) || filler.Count >= 400) break;
-                        }
-                        if (filler.Count == before) break;
+                        var fits = pool.Where(a => a.Duration <= left && (filler.Count == 0 || filler[^1].Id != a.Id)).ToList();
+                        if (fits.Count == 0) break;
+                        var fresh = fits.Where(a => !used.Contains(a.Id)).ToList();
+                        if (fresh.Count > 0) fits = fresh;
+                        // Médias d'au moins un quart du temps restant (au plus 20 min) s'il y en a.
+                        var longOnes = fits.Where(a => a.Duration >= TimeSpan.FromTicks(Math.Min(left.Ticks / 4, TimeSpan.FromMinutes(20).Ticks))).ToList();
+                        var choice = longOnes.Count > 0 ? longOnes : fits;
+                        // Les bandes-annonces gardent la priorité pour les petits trous.
+                        if (left <= TimeSpan.FromMinutes(5) && choice.Any(a => a.Kind == AssetKind.BandeAnnonce))
+                            choice = choice.Where(a => a.Kind == AssetKind.BandeAnnonce).ToList();
+                        var pick = choice[Random.Shared.Next(choice.Count)];
+                        filler.Add(pick);
+                        used.Add(pick.Id);
+                        left -= pick.Duration;
                     }
                     if (left > TimeSpan.FromMinutes(1))
                         warnings.Add($"{label} : {Components.Shared.Fmt.Duration(left)} sans remplissage avant la case (bouche-trou).");
@@ -210,13 +229,14 @@ public sealed class Grille(IDbContextFactory<NarDbContext> dbFactory, ProgrammeT
 
             var key = occ.Key;
             var batch = filler.Select(a => new PlaylistEntry { ChannelId = channelId, AssetId = a.Id, GroupKey = key, Remplissage = true }).ToList();
+            batch.AddRange(transition.Select(a => new PlaylistEntry { ChannelId = channelId, AssetId = a.Id, GroupKey = key }));
             batch.AddRange(expansion.Items.Select((item, n) => new PlaylistEntry
             {
                 ChannelId = channelId,
                 AssetId = item.AssetId,
                 GroupKey = key,
                 StartMode = n == 0 ? StartMode.HeureFixe : StartMode.Enchaine,
-                FixedStart = n == 0 ? occ.Start : null,
+                FixedStart = n == 0 ? start : null,
             }));
             var position = entries.Count == 0 ? 0 : entries.Max(e => e.Position) + 1;
             foreach (var e in batch) e.Position = position++;
@@ -224,7 +244,7 @@ public sealed class Grille(IDbContextFactory<NarDbContext> dbFactory, ProgrammeT
             entries.AddRange(batch);
             await ProgrammeTypes.ApplySeriesAsync(db, channelId, expansion.SeriesUpdates, ct);
             await db.SaveChangesAsync(ct); // le tirage suivant voit cet épisode et ces médias
-            spans.Add((occ.Start, occ.Start + expansion.Duration));
+            spans.Add((start, start + expansion.Duration));
             added++;
         }
 
@@ -250,6 +270,50 @@ public sealed class Grille(IDbContextFactory<NarDbContext> dbFactory, ProgrammeT
         if (added + removed + purged > 0)
             logger.LogInformation("Grille de « {Channel} » : {Summary}", channel.Name, report.Summary);
         return report;
+    }
+
+    /// <summary>
+    /// Enchaînement avant une case : jingle d'entrée pub → spots (durée voulue) → jingle de sortie pub →
+    /// jingle Rétro 95 du programme. Les parties que le programme type contient déjà ne sont pas doublées.
+    /// </summary>
+    public static async Task<List<MediaAsset>> TransitionAsync(NarDbContext db, Channel channel, ProgrammeType type, Expansion expansion, CancellationToken ct)
+    {
+        var list = new List<MediaAsset>();
+        if (!channel.EnchainementActif) return list;
+
+        async Task<MediaAsset?> Ready(int? id) => id is { } i
+            ? await db.MediaAssets.AsNoTracking().FirstOrDefaultAsync(a => a.Id == i && a.Status == AssetStatus.Pret, ct)
+            : null;
+
+        if (channel.EnchainementPubSeconds > 0 && type.Blocs.All(b => b.Type != BlocType.EcranPub))
+        {
+            var target = TimeSpan.FromSeconds(Math.Clamp(channel.EnchainementPubSeconds, 10, 1800));
+            var spots = (await db.MediaAssets.AsNoTracking().Where(a => a.Status == AssetStatus.Pret && a.Kind == AssetKind.Spot).ToListAsync(ct))
+                .Where(a => a.Duration > TimeSpan.Zero).OrderBy(_ => Random.Shared.Next()).ToList();
+            var picked = new List<MediaAsset>();
+            var total = TimeSpan.Zero;
+            foreach (var spot in spots)
+            {
+                if (total + spot.Duration > target * 1.1) continue;
+                picked.Add(spot);
+                total += spot.Duration;
+                if (total >= target * 0.9) break;
+            }
+            if (picked.Count > 0)
+            {
+                if (await Ready(channel.JinglePubDebutId) is { } debut) list.Add(debut);
+                list.AddRange(picked);
+                if (await Ready(channel.JinglePubFinId) is { } fin) list.Add(fin);
+            }
+        }
+
+        if (channel.EnchainementJingleProgramme && !type.Blocs.Any(b => b.Type == BlocType.HabillageDuProgramme && (b.AtelierKind ?? 0) == 0))
+        {
+            var programme = expansion.Items.FirstOrDefault(i => i.Kind is AssetKind.Programme or AssetKind.Film or AssetKind.Episode);
+            var asset = programme is null ? null : await db.MediaAssets.AsNoTracking().FirstOrDefaultAsync(a => a.Id == programme.AssetId, ct);
+            if (asset is not null && await ProgrammeTypes.FindCreationAsync(db, asset, 0, ct) is { } jingle) list.Add(jingle);
+        }
+        return list;
     }
 
     /// <summary>Après suppression d'épisodes à venir, chaque série reprend juste avant le premier d'entre eux.</summary>

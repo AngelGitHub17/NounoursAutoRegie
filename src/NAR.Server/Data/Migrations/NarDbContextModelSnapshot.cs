@@ -188,6 +188,15 @@ namespace NAR.Server.Data.Migrations
                     b.Property<bool>("Enabled")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("EnchainementActif")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("EnchainementJingleProgramme")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("EnchainementPubSeconds")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("EncoderPreset")
                         .HasMaxLength(32)
                         .HasColumnType("TEXT");
@@ -213,6 +222,12 @@ namespace NAR.Server.Data.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("Height")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("JinglePubDebutId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("JinglePubFinId")
                         .HasColumnType("INTEGER");
 
                     b.Property<bool>("Loop")
@@ -293,6 +308,9 @@ namespace NAR.Server.Data.Migrations
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("ALaSuite")
                         .HasColumnType("INTEGER");
 
                     b.Property<bool>("Active")

@@ -18,19 +18,30 @@ public static class Endpoints
     /// <summary>API réservée aux moteurs : configuration + conducteur de leur chaîne.</summary>
     public static void MapEngineApi(this WebApplication app)
     {
-        app.MapGet("/api/engine/channels/{id:int}/config", async (int id, HttpContext http, EngineKey key, EngineConfigBuilder builder) =>
+        app.MapGet("/api/engine/channels/{id:int}/config", async (int id, HttpContext http, EngineKey key, EngineConfigBuilder builder, DataVersion version) =>
         {
             var given = http.Request.Headers["X-NAR-Engine-Key"].ToString();
             if (!CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(given), Encoding.UTF8.GetBytes(key.Value)))
                 return Results.StatusCode(StatusCodes.Status401Unauthorized);
 
-            var config = await builder.BuildAsync(id, http.RequestAborted);
-            if (config is null) return Results.NotFound();
+            // Reconstruite seulement si la base a changé (ou au bout d'une minute : logo, fichiers…).
+            var now = Environment.TickCount64;
+            var v = version.Value;
+            if (!ConfigCache.TryGetValue(id, out var cached) || cached.Version != v || now - cached.At > 60_000)
+            {
+                var config = await builder.BuildAsync(id, http.RequestAborted);
+                if (config is null)
+                {
+                    ConfigCache.TryRemove(id, out _);
+                    return Results.NotFound();
+                }
+                cached = (v, now, $"\"{config.Revision}\"", JsonSerializer.Serialize(config, ChannelConfig.JsonOptions));
+                ConfigCache[id] = cached;
+            }
 
-            var etag = $"\"{config.Revision}\"";
-            if (http.Request.Headers.IfNoneMatch.ToString() == etag) return Results.StatusCode(StatusCodes.Status304NotModified);
-            http.Response.Headers.ETag = etag;
-            return Results.Text(JsonSerializer.Serialize(config, ChannelConfig.JsonOptions), "application/json");
+            if (http.Request.Headers.IfNoneMatch.ToString() == cached.ETag) return Results.StatusCode(StatusCodes.Status304NotModified);
+            http.Response.Headers.ETag = cached.ETag;
+            return Results.Text(cached.Json, "application/json");
         }).AllowAnonymous();
     }
 
@@ -38,6 +49,8 @@ public static class Endpoints
     /// Flux publics : /live/{id}/index.m3u8 (HLS relayé depuis le moteur) et /live/chaines.m3u (liste IPTV).
     /// Sans connexion, pour NounoursTV, Jellyfin et les lecteurs IPTV.
     /// </summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, (long Version, long At, string ETag, string Json)> ConfigCache = new();
+
     public static void MapLive(this WebApplication app)
     {
         app.MapGet("/live/chaines.m3u", async (HttpContext http, IDbContextFactory<NarDbContext> dbFactory) =>
