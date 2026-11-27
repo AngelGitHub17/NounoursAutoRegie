@@ -96,6 +96,11 @@ public sealed class PlayoutEngine(
 
         SourceDecoder? current = null;
         ScheduledItem? currentItem = null;
+        // Position de départ de la source en cours (pour la relancer au même endroit) et nombre de relances.
+        long currentStartFrame = 0, currentOffset = 0;
+        var currentRetries = 0;
+        long failureSeenFrame = -1;
+        long currentShown = 0; // images de la source en cours réellement passées à l'antenne
         SourceDecoder? filler = null;
         var fillerRetryAt = 0L;
         var preloads = new Dictionary<string, SourceDecoder>();
@@ -209,12 +214,53 @@ public sealed class PlayoutEngine(
                 if (Interlocked.Exchange(ref _pendingPlan, null) is { } newPlan)
                     ApplyPlan(newPlan);
 
+                // --- Source réseau en échec : nouvel essai au même endroit --------------------
+                // Jellyfin ou un partage Windows peuvent mettre du temps à répondre ou décrocher un
+                // instant : plutôt que de sauter tout un film, on le relance au même endroit (deux fois,
+                // après 2 puis 4 s, image figée en attendant).
+                var retryPending = false;
+                // Une source réseau qui s'arrête bien avant sa fin prévue a été coupée en route (le lecteur
+                // y voit une simple fin de fichier) : on la traite comme une panne.
+                var cutShort = current is { IsFinished: true, Failure: null, Buffered: 0 } && currentItem is not null
+                               && IsRemote(currentItem.Path) && currentOffset + currentShown < currentItem.DurationFrames - fps * 3;
+                if (cutShort && failureSeenFrame < 0)
+                    _logger.LogWarning("{Tc} « {Title} » s'est arrêté à +{Pos} au lieu de {Dur} : flux interrompu", rate.ToTimecode(frame),
+                        currentItem!.Title, rate.ToTimecode(currentOffset + currentShown), rate.ToTimecode(currentItem.DurationFrames));
+                if ((current is { Failure: not null } || cutShort) && currentItem is not null && currentRetries < 2 && IsRemote(currentItem.Path))
+                {
+                    var position = currentOffset + currentShown;
+                    if (position < currentItem.DurationFrames - fps * 5)
+                    {
+                        if (failureSeenFrame < 0) failureSeenFrame = frame;
+                        if (frame - failureSeenFrame < fps * 2L * (currentRetries + 1))
+                        {
+                            retryPending = true;
+                        }
+                        else
+                        {
+                            currentRetries++;
+                            var why = current!.Failure ?? "flux interrompu";
+                            _logger.LogWarning("{Tc} Nouvel essai de « {Title} » ({N}/2) à +{Pos} après : {Why}", rate.ToTimecode(frame),
+                                currentItem.Title, currentRetries, rate.ToTimecode(position), why);
+                            asRun.Write("retry", frame, rate.ToTimecode(frame), currentItem.Id, currentItem.Title, detail: why);
+                            lastIncident = $"{DateTimeOffset.Now:HH:mm:ss} {currentItem.Title} : nouvel essai ({why})";
+                            Dispose(current);
+                            current = CreateDecoder(currentItem, position);
+                            currentStartFrame = frame;
+                            currentOffset = position;
+                            currentShown = 0;
+                            underrun = 0;
+                            failureSeenFrame = -1;
+                        }
+                    }
+                }
+
                 // --- Décision du conducteur -------------------------------------------------
                 // Si l'élément démarré est inutilisable sur-le-champ (fichier corrompu…), on redemande
                 // une décision dans la même image : aucune image n'est perdue.
                 for (var attempt = 0; attempt < 4; attempt++)
                 {
-                    var decision = conductor.Tick(frame, current is null || current.IsFinished);
+                    var decision = conductor.Tick(frame, !retryPending && (current is null || current.IsFinished));
 
                     if (decision.PreloadIndex >= 0 && !preloads.ContainsKey(Key(items[decision.PreloadIndex])))
                     {
@@ -229,16 +275,24 @@ public sealed class PlayoutEngine(
                         {
                             EndCurrent(current?.IsFinished == false ? "cut" : "end");
                             var item = items[decision.ItemIndex];
-                            if (preloads.Remove(Key(item), out var ready) && decision.OffsetFrames == 0)
+                            if (preloads.Remove(Key(item), out var ready) && decision.OffsetFrames == 0 && ready.Failure is null)
                             {
                                 current = ready;
                             }
                             else
                             {
+                                // Préchargement absent, décalé, ou déjà en échec (serveur qui a refusé) : départ neuf.
+                                if (ready?.Failure is { } why)
+                                    _logger.LogWarning("Préchargement de « {Title} » en échec ({Why}) : nouveau départ", item.Title, why);
                                 Dispose(ready);
                                 current = CreateDecoder(item, decision.OffsetFrames);
                             }
                             currentItem = item;
+                            currentStartFrame = frame;
+                            currentOffset = decision.OffsetFrames;
+                            currentRetries = 0;
+                            currentShown = 0;
+                            failureSeenFrame = -1;
                             underrun = 0;
                             fallbackAnnounced = false;
                             asRun.Write("start", frame, rate.ToTimecode(frame), item.Id, item.Title,
@@ -301,6 +355,7 @@ public sealed class PlayoutEngine(
 
                 if (source is not null && ReadFrame(source, video, audio, audioBytes))
                 {
+                    if (ReferenceEquals(source, current)) currentShown++;
                     state = current is not null ? AntennaState.Playing : AntennaState.Filler;
                     underrun = 0;
                 }
@@ -313,9 +368,15 @@ public sealed class PlayoutEngine(
                         state = AntennaState.Hold;
                         underrun++;
                         underrunTotal++;
-                        if (underrun > fps * 2)
+                        // Patience selon la source : une source réseau qui démarre (surtout prise en cours,
+                        // donc avec un saut dans le fichier) peut mettre plusieurs secondes à livrer sa première image.
+                        var path = ReferenceEquals(source, current) ? currentItem?.Path : plan.FillerPath;
+                        var remote = path is not null && IsRemote(path);
+                        var starting = source.Delivered == 0;
+                        var limit = starting ? (remote ? 20 : 6) : (remote ? 8 : 2);
+                        if (underrun > fps * limit)
                         {
-                            source.Fail("aucune image reçue depuis 2 s");
+                            source.Fail(starting ? $"aucune image {limit} s après le démarrage" : $"aucune image reçue depuis {limit} s");
                             underrun = 0;
                         }
                     }
@@ -402,6 +463,9 @@ public sealed class PlayoutEngine(
     }
 
     /// <summary>Relit la configuration toutes les 2 s et prépare le nouveau conducteur hors de la boucle d'antenne.</summary>
+    private static bool IsRemote(string path) =>
+        path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || path.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+
     private async Task WatchConfigAsync(ChannelConfig running, FrameRate rate, DateTimeOffset epoch, CancellationToken ct)
     {
         var fingerprint = running.StructuralFingerprint();
@@ -438,7 +502,10 @@ public sealed class PlayoutEngine(
             new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = ct },
             async (i, token) =>
             {
-                probes[i] = await ProbeCachedAsync(config.Resolve(itemsConfig[i].Path), token);
+                var path = config.Resolve(itemsConfig[i].Path);
+                probes[i] = ChannelConfig.IsUrl(path) && itemsConfig[i].Media is { DurationSeconds: > 0 } known
+                    ? new ProbeResult(true, TimeSpan.FromSeconds(known.DurationSeconds), known.HasVideo, known.HasAudio, null)
+                    : await ProbeCachedAsync(path, token);
                 if (!probes[i].Ok)
                     _logger.LogWarning("Élément « {Title} » inutilisable : {Error}", itemsConfig[i].Title, probes[i].Error);
             });

@@ -68,6 +68,9 @@ public sealed class EngineConfigBuilder(IDbContextFactory<NarDbContext> dbFactor
                         Overlay = e.Asset.Kind is not (AssetKind.Spot or AssetKind.Jingle or AssetKind.BandeAnnonce or AssetKind.Habillage),
                         Programme = e.Asset.Kind is AssetKind.Programme or AssetKind.Episode or AssetKind.Film,
                         Rating = Signaletique.Of(e.Asset),
+                        Media = Network.SmbSources.IsRemote(e.Asset.Path) && e.Asset.Status == AssetStatus.Pret && e.Asset.Duration > TimeSpan.Zero
+                            ? new MediaInfo { DurationSeconds = e.Asset.Duration.TotalSeconds, HasVideo = e.Asset.Width > 0, HasAudio = e.Asset.HasAudio }
+                            : null,
                     })
                     .ToList(),
             },

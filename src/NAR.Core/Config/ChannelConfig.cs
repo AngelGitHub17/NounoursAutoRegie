@@ -107,6 +107,13 @@ public sealed class HlsConfig
     public int ListSize { get; set; } = 15;
 }
 
+public sealed class MediaInfo
+{
+    public double DurationSeconds { get; set; }
+    public bool HasVideo { get; set; } = true;
+    public bool HasAudio { get; set; } = true;
+}
+
 public sealed class OverlayConfig
 {
     /// <summary>Logo PNG de la chaîne (transparent de préférence). Absent = pas de logo.</summary>
@@ -183,6 +190,12 @@ public sealed class ItemConfig
 
     /// <summary>Signalétique jeunesse : 10, 12, 16 ou 18 (absent = tous publics).</summary>
     public int? Rating { get; set; }
+
+    /// <summary>
+    /// Analyse déjà faite par la régie (durée, pistes). Le moteur s'en sert pour les médias distants
+    /// au lieu de les sonder un par un au démarrage, ce qui le fait partir tout de suite.
+    /// </summary>
+    public MediaInfo? Media { get; set; }
 
     public static TimeSpan? ParseTime(string? text) =>
         string.IsNullOrWhiteSpace(text)

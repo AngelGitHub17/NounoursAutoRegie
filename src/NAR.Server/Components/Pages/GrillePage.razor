@@ -150,7 +150,7 @@ else if (_loaded)
     private bool CanEdit => Perm.Playlist(_user);
 
     private static readonly string[] DayLetters = ["L", "M", "M", "J", "V", "S", "D"];
-    private static readonly AssetKind[] FillKinds = [AssetKind.BandeAnnonce, AssetKind.Clip, AssetKind.Habillage, AssetKind.Spot, AssetKind.Programme, AssetKind.Autre];
+    private static readonly AssetKind[] FillKinds = [AssetKind.BandeAnnonce, AssetKind.Clip, AssetKind.Habillage, AssetKind.Spot, AssetKind.Programme, AssetKind.Film, AssetKind.Episode, AssetKind.Autre];
 
     private List<Channel> _channels = new();
     private Channel? _channel;
