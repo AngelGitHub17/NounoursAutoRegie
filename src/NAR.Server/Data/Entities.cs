@@ -70,6 +70,12 @@ public class Channel
     public bool OverlayRating { get; set; } = true;
     public bool OverlayRatingAlways { get; set; }
 
+    /// <summary>Qualité adaptative : 0 = une seule qualité, 1 = + 360p, 2 = + 720p et 360p.</summary>
+    public int QualiteAdaptative { get; set; } = 1;
+
+    /// <summary>Playlist à donner aux lecteurs : master.m3u8 (toutes les qualités) ou index.m3u8.</summary>
+    public string PlaylistName => QualiteAdaptative > 0 ? "master.m3u8" : "index.m3u8";
+
     // Grille de la semaine.
     /// <summary>La régie remplit elle-même le conducteur d'après la grille.</summary>
     public bool GrilleActive { get; set; }

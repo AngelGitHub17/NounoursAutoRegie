@@ -105,6 +105,21 @@ public sealed class HlsConfig
     public string Directory { get; set; } = "out/hls";
     public int SegmentSeconds { get; set; } = 2;
     public int ListSize { get; set; } = 15;
+
+    /// <summary>
+    /// Qualités supplémentaires, plus légères, produites par le même encodeur (qualité adaptative) :
+    /// chacune dans un sous-dossier, et master.m3u8 les propose toutes au lecteur.
+    /// </summary>
+    public List<RenditionConfig> Renditions { get; set; } = new();
+}
+
+public sealed class RenditionConfig
+{
+    /// <summary>Nom du sous-dossier (lettres et chiffres).</summary>
+    public string Name { get; set; } = "low";
+    public int Height { get; set; } = 360;
+    public int VideoBitrateKbps { get; set; } = 800;
+    public int AudioBitrateKbps { get; set; } = 96;
 }
 
 public sealed class MediaInfo

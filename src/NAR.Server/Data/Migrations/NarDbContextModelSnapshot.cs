@@ -258,6 +258,9 @@ namespace NAR.Server.Data.Migrations
                     b.Property<double>("PreloadSeconds")
                         .HasColumnType("REAL");
 
+                    b.Property<int>("QualiteAdaptative")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("RemplissageKinds")
                         .IsRequired()
                         .HasMaxLength(200)

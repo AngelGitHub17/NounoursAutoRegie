@@ -59,7 +59,23 @@ public sealed class OutputEncoder : IAsyncDisposable
 
         _ = Task.Run(WriteVideoAsync);
         _ = Task.Run(WriteAudioAsync);
-        _logger.LogInformation("Encodeur démarré : {Format}, {Codec}, HLS dans {Dir}", _format, _config.Encoder.Video, HlsDirectory);
+        _logger.LogInformation("Encodeur démarré : {Format}, {Codec}, HLS dans {Dir}{Abr}", _format, _config.Encoder.Video, HlsDirectory,
+            Renditions() is { Count: > 0 } r ? " (qualité adaptative : + " + string.Join(", ", r.Select(x => $"{x.Height}p")) + ")" : "");
+    }
+
+    /// <summary>Qualités supplémentaires valides (dimensions paires, plus petites que l'antenne).</summary>
+    private List<(RenditionConfig R, int Width, int Height)> Renditions()
+    {
+        var list = new List<(RenditionConfig, int, int)>();
+        foreach (var r in _config.Hls.Renditions)
+        {
+            if (string.IsNullOrWhiteSpace(r.Name) || !r.Name.All(char.IsAsciiLetterOrDigit)) continue;
+            var height = Math.Clamp(r.Height / 2 * 2, 144, _format.Height);
+            if (height >= _format.Height) continue;
+            var width = (int)Math.Round((double)_format.Width * height / _format.Height / 2) * 2;
+            list.Add((r, width, height));
+        }
+        return list;
     }
 
     private IEnumerable<string> BuildArgs(int audioPort)
@@ -69,6 +85,7 @@ public sealed class OutputEncoder : IAsyncDisposable
         var h = _config.Hls;
         var ci = CultureInfo.InvariantCulture;
         var gop = Math.Max(1, (int)Math.Round(f.Rate.FramesPerSecond * h.SegmentSeconds));
+        var renditions = Renditions();
 
         var args = new List<string>
         {
@@ -77,31 +94,71 @@ public sealed class OutputEncoder : IAsyncDisposable
             "-framerate", $"{f.Rate.Numerator}/{f.Rate.Denominator}", "-thread_queue_size", "64", "-i", "pipe:0",
             "-f", "s16le", "-ar", f.SampleRate.ToString(ci), "-ac", f.AudioChannels.ToString(ci),
             "-thread_queue_size", "1024", "-i", $"tcp://127.0.0.1:{audioPort}",
-            "-map", "0:v", "-map", "1:a",
-            "-c:v", e.Video,
         };
-        if (!string.IsNullOrWhiteSpace(e.Preset)) args.AddRange(["-preset", e.Preset!]);
-        args.AddRange([
-            "-b:v", $"{e.VideoBitrateKbps}k", "-maxrate", $"{e.VideoBitrateKbps}k", "-bufsize", $"{e.VideoBitrateKbps * 2}k",
-            "-g", gop.ToString(ci), "-keyint_min", gop.ToString(ci),
-            "-force_key_frames", $"expr:gte(t,n_forced*{h.SegmentSeconds})",
-        ]);
-        if (e.Video.StartsWith("libx26", StringComparison.Ordinal)) args.AddRange(["-sc_threshold", "0"]);
-        args.AddRange(["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", $"{e.AudioBitrateKbps}k", "-ar", f.SampleRate.ToString(ci)]);
-        args.AddRange(e.ExtraArgs);
+        if (renditions.Count > 0)
+        {
+            // Une seule image source, découpée vers chaque qualité.
+            var graph = new System.Text.StringBuilder($"[0:v]split={renditions.Count + 1}[vmain]");
+            for (var i = 0; i < renditions.Count; i++) graph.Append(CultureInfo.InvariantCulture, $"[vs{i}]");
+            for (var i = 0; i < renditions.Count; i++)
+                graph.Append(CultureInfo.InvariantCulture, $";[vs{i}]scale={renditions[i].Width}:{renditions[i].Height}:flags=bicubic[vr{i}]");
+            args.AddRange(["-filter_complex", graph.ToString()]);
+        }
 
-        var dir = HlsDirectory;
-        args.AddRange([
-            "-f", "hls",
-            "-hls_time", h.SegmentSeconds.ToString(ci),
-            "-hls_list_size", h.ListSize.ToString(ci),
-            // Numéros de segment basés sur l'heure : un redémarrage de l'encodeur ne casse pas les lecteurs.
-            "-hls_start_number_source", "epoch",
-            "-hls_flags", "delete_segments+independent_segments+program_date_time+append_list+discont_start",
-            "-hls_segment_filename", Path.Combine(dir, "seg_%010d.ts"),
-            Path.Combine(dir, "index.m3u8"),
-        ]);
+        void Output(string videoLabel, int videoKbps, int audioKbps, string dir)
+        {
+            args.AddRange(["-map", videoLabel, "-map", "1:a", "-c:v", e.Video]);
+            if (!string.IsNullOrWhiteSpace(e.Preset)) args.AddRange(["-preset", e.Preset!]);
+            args.AddRange([
+                "-b:v", $"{videoKbps}k", "-maxrate", $"{videoKbps}k", "-bufsize", $"{videoKbps * 2}k",
+                "-g", gop.ToString(ci), "-keyint_min", gop.ToString(ci),
+                // Images clés au même instant dans chaque qualité : le lecteur peut changer de qualité entre deux segments.
+                "-force_key_frames", $"expr:gte(t,n_forced*{h.SegmentSeconds})",
+            ]);
+            if (e.Video.StartsWith("libx26", StringComparison.Ordinal)) args.AddRange(["-sc_threshold", "0"]);
+            args.AddRange(["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", $"{audioKbps}k", "-ar", f.SampleRate.ToString(ci)]);
+            args.AddRange(e.ExtraArgs);
+            Directory.CreateDirectory(dir);
+            args.AddRange([
+                "-f", "hls",
+                "-hls_time", h.SegmentSeconds.ToString(ci),
+                "-hls_list_size", h.ListSize.ToString(ci),
+                // Numéros de segment basés sur l'heure : un redémarrage de l'encodeur ne casse pas les lecteurs.
+                "-hls_start_number_source", "epoch",
+                "-hls_flags", "delete_segments+independent_segments+program_date_time+append_list+discont_start",
+                "-hls_segment_filename", Path.Combine(dir, "seg_%010d.ts"),
+                Path.Combine(dir, "index.m3u8"),
+            ]);
+        }
+
+        Output(renditions.Count > 0 ? "[vmain]" : "0:v", e.VideoBitrateKbps, e.AudioBitrateKbps, HlsDirectory);
+        for (var i = 0; i < renditions.Count; i++)
+            Output($"[vr{i}]", renditions[i].R.VideoBitrateKbps, renditions[i].R.AudioBitrateKbps, Path.Combine(HlsDirectory, renditions[i].R.Name));
+        WriteMaster(renditions);
         return args;
+    }
+
+    /// <summary>master.m3u8 : toutes les qualités, la meilleure en premier. Supprimé s'il n'y en a qu'une.</summary>
+    private void WriteMaster(List<(RenditionConfig R, int Width, int Height)> renditions)
+    {
+        var path = Path.Combine(HlsDirectory, "master.m3u8");
+        if (renditions.Count == 0)
+        {
+            if (File.Exists(path)) File.Delete(path);
+            return;
+        }
+        var ci = CultureInfo.InvariantCulture;
+        var fps = _format.Rate.FramesPerSecond.ToString("0.000", ci);
+        var sb = new System.Text.StringBuilder("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-INDEPENDENT-SEGMENTS\n");
+        void Variant(int videoKbps, int audioKbps, int w, int hgt, string uri)
+        {
+            var bandwidth = (long)((videoKbps + audioKbps) * 1000 * 1.15);
+            sb.Append(ci, $"#EXT-X-STREAM-INF:BANDWIDTH={bandwidth},AVERAGE-BANDWIDTH={(videoKbps + audioKbps) * 1000},RESOLUTION={w}x{hgt},FRAME-RATE={fps}\n{uri}\n");
+        }
+        Variant(_config.Encoder.VideoBitrateKbps, _config.Encoder.AudioBitrateKbps, _format.Width, _format.Height, "index.m3u8");
+        foreach (var (r, w, hgt) in renditions.OrderByDescending(x => x.Height))
+            Variant(r.VideoBitrateKbps, r.AudioBitrateKbps, w, hgt, $"{r.Name}/index.m3u8");
+        File.WriteAllText(path, sb.ToString());
     }
 
     /// <summary>Envoie une image à l'encodeur. Attend s'il prend du retard (contre-pression = processeur saturé).</summary>

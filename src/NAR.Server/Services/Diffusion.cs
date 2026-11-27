@@ -176,6 +176,9 @@ if (NAR_BASE === '') nar_fail(500, "adresse publique de la régie non renseigné
 $c = (int)($_GET['c'] ?? 0);
 $seg = (string)($_GET['seg'] ?? '');
 if ($c <= 0 || $c > 9999) nar_fail(400, 'chaîne invalide');
+// Qualité (qualité adaptative de la régie) : vide = liste des qualités, « main » = la meilleure.
+$v = (string)($_GET['v'] ?? '');
+if ($v !== '' && !preg_match('/^[a-z0-9]{1,10}$/', $v)) nar_fail(400, 'qualité invalide');
 
 // ── Diagnostic (lien « Tester le relais » de la page Diffusion) ─────
 // Mesure la liaison régie → site : un segment doit arriver nettement plus vite qu'il ne dure.
@@ -227,8 +230,8 @@ if ($token !== '') {
     if (!$auth) nar_fail(403, 'lien invalide ou révoqué');
     $level = $auth['level']; $isAdmin = false; $is18 = false;
 } else {
-    $v = viewer();
-    $level = $v['level']; $isAdmin = $v['admin']; $is18 = $v['is18'];
+    $who = viewer();
+    $level = $who['level']; $isAdmin = $who['admin']; $is18 = $who['is18'];
 }
 if (!channel_is_unlocked($channel, $level, $isAdmin)) nar_fail(403, 'abonnement requis pour cette chaîne');
 if (!empty($channel['is_adult']) && !$is18 && !$isAdmin) nar_fail(403, 'contenu réservé aux adultes');
@@ -295,7 +298,9 @@ function nar_send_file(string $file): never {
 // ── Segment vidéo ────────────────────────────────────────────────
 if ($seg !== '') {
     if (!preg_match('/^seg_\d+\.ts$/', $seg)) nar_fail(400, 'segment invalide');
-    $file = $cache ? $cache . '/' . $seg : null;
+    $vname = $v === '' ? 'main' : $v;
+    $sub = $vname === 'main' ? '' : $vname . '/';
+    $file = $cache ? $cache . '/' . $vname . '-' . $seg : null;
     if ($file) {
         if (is_file($file)) nar_send_file($file);
         // Déjà en cours de récupération : on attend tant que le fichier grossit (sinon on le reprend).
@@ -323,7 +328,7 @@ if ($seg !== '') {
         if (!connection_aborted()) { echo $data; flush(); }
     };
     $r = [];
-    $ok = nar_cache_fetch(NAR_BASE . '/live/' . $c . '/' . $seg . $key, $file, $sink, $r);
+    $ok = nar_cache_fetch(NAR_BASE . '/live/' . $c . '/' . $sub . $seg . $key, $file, $sink, $r);
     if (!$ok && !$started) {
         clearstatcache();
         if ($file && is_file($file)) nar_send_file($file); // un autre l'a terminé entre-temps
@@ -332,12 +337,44 @@ if ($seg !== '') {
     exit;
 }
 
-// ── Playlist (gardée 1 s : tous les spectateurs partagent la même lecture) ──
-$pl = $cache ? $cache . '/index.m3u8' : null;
+// ── Liste des qualités (master) ─────────────────────────────────
+// Si la régie propose plusieurs qualités, le lecteur reçoit la liste et choisit lui-même
+// celle qui passe sur la connexion du spectateur.
+if ($v === '') {
+    $mf = $cache ? $cache . '/master.m3u8' : null;
+    if ($mf && is_file($mf) && time() - filemtime($mf) < 30) {
+        $master = file_get_contents($mf);
+    } else {
+        $r = nar_fetch(NAR_BASE . '/live/' . $c . '/master.m3u8' . $key, 10);
+        $master = ($r['code'] == 200 && $r['body']) ? $r['body'] : '';
+        if ($r['err'] && !$master) nar_fail(502, 'playlist indisponible : ' . nar_detail($r));
+        if ($mf) { @file_put_contents($mf . '.tmp', $master); @rename($mf . '.tmp', $mf); }
+    }
+    if ($master !== '') {
+        $out = [];
+        foreach (explode("\n", trim($master)) as $line) {
+            $line = rtrim($line);
+            if ($line === '' || $line[0] === '#') { $out[] = $line; continue; }
+            $path = parse_url($line, PHP_URL_PATH) ?: '';
+            $name = strpos($path, '/') !== false ? explode('/', $path)[0] : 'main';
+            $out[] = 'nar.php?c=' . $c . '&v=' . rawurlencode($name) . $tokenSuffix;
+        }
+        $txt = implode("\n", $out) . "\n";
+        header('Content-Type: application/vnd.apple.mpegurl');
+        header('Content-Length: ' . strlen($txt));
+        echo $txt;
+        exit;
+    }
+    $v = 'main'; // une seule qualité : on sert directement sa playlist
+}
+
+// ── Playlist d'une qualité (gardée 1 s : tous les spectateurs partagent la même lecture) ──
+$sub = $v === 'main' ? '' : $v . '/';
+$pl = $cache ? $cache . '/' . $v . '-index.m3u8' : null;
 if ($pl && is_file($pl) && microtime(true) - filemtime($pl) < 1.0) {
     $body = file_get_contents($pl);
 } else {
-    $r = nar_fetch(NAR_BASE . '/live/' . $c . '/index.m3u8' . $key, 10);
+    $r = nar_fetch(NAR_BASE . '/live/' . $c . '/' . $sub . 'index.m3u8' . $key, 10);
     if ($r['err'] || $r['code'] != 200 || !$r['body']) nar_fail(502, 'playlist indisponible : ' . nar_detail($r));
     $body = $r['body'];
     if ($pl) { @file_put_contents($pl . '.tmp', $body); @rename($pl . '.tmp', $pl); }
@@ -349,7 +386,7 @@ foreach (explode("\n", trim($body)) as $line) {
     if ($line === '' || $line[0] === '#') { $out[] = $line; continue; }
     $name = basename(parse_url($line, PHP_URL_PATH) ?: '');
     if (preg_match('/^seg_\d+\.ts$/', $name)) $names[] = $name;
-    $out[] = $name !== '' ? 'nar.php?c=' . $c . '&seg=' . rawurlencode($name) . $tokenSuffix : $line;
+    $out[] = $name !== '' ? 'nar.php?c=' . $c . '&v=' . $v . '&seg=' . rawurlencode($name) . $tokenSuffix : $line;
 }
 $txt = implode("\n", $out) . "\n";
 header('Content-Type: application/vnd.apple.mpegurl');
@@ -361,9 +398,10 @@ echo $txt;
 if ($cache && function_exists('fastcgi_finish_request')) {
     fastcgi_finish_request();
     foreach (array_slice($names, -2) as $name) {
-        if (is_file($cache . '/' . $name) || is_file($cache . '/' . $name . '.part')) continue;
+        $file = $cache . '/' . $v . '-' . $name;
+        if (is_file($file) || is_file($file . '.part')) continue;
         $r = [];
-        nar_cache_fetch(NAR_BASE . '/live/' . $c . '/' . $name . $key, $cache . '/' . $name, null, $r);
+        nar_cache_fetch(NAR_BASE . '/live/' . $c . '/' . $sub . $name . $key, $file, null, $r);
     }
 }
 

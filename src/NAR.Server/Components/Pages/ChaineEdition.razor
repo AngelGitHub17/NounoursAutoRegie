@@ -80,6 +80,18 @@ else
             <label class="check"><input type="checkbox" @bind="_channel.OverlayRatingAlways" disabled="@(!_channel.OverlayRating)" /> Signalétique pendant tout le programme (sinon : la première minute de chaque partie)</label>
         </div>
 
+        <h2>Qualité adaptative</h2>
+        <div class="form-grid">
+            <label class="field"><span>Qualités proposées aux lecteurs</span>
+                <select @bind="_channel.QualiteAdaptative">
+                    <option value="0">Une seule (celle de l'antenne)</option>
+                    <option value="1">+ 360p (conseillé : peu de processeur en plus)</option>
+                    <option value="2">+ 720p et 360p</option>
+                </select>
+            </label>
+            <p class="small muted" style="align-self:end">Le lecteur choisit tout seul la qualité qui passe sur la connexion du spectateur (régie à distance, Nounours.TV, téléphones). Changer ce réglage relance le moteur.</p>
+        </div>
+
         <h2>Format d'antenne</h2>
         <div class="form-grid">
             <label class="field">

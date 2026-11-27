@@ -41,7 +41,11 @@ public sealed class EngineConfigBuilder(IDbContextFactory<NarDbContext> dbFactor
                 VideoBitrateKbps = channel.VideoBitrateKbps,
                 AudioBitrateKbps = channel.AudioBitrateKbps,
             },
-            Hls = new HlsConfig { Directory = Path.Combine(dir, "hls"), SegmentSeconds = channel.SegmentSeconds, ListSize = 15 },
+            Hls = new HlsConfig
+            {
+                Directory = Path.Combine(dir, "hls"), SegmentSeconds = channel.SegmentSeconds, ListSize = 15,
+                Renditions = Renditions(channel),
+            },
             StatusPort = EnginePort(channel),
             StatusBind = "127.0.0.1",
             FfmpegPath = o.FfmpegPath,
@@ -77,6 +81,17 @@ public sealed class EngineConfigBuilder(IDbContextFactory<NarDbContext> dbFactor
         };
         config.Revision = Fingerprint(config);
         return config;
+    }
+
+    /// <summary>Qualités légères ajoutées pour les connexions modestes (régie à distance, Nounours.TV, mobiles).</summary>
+    private static List<RenditionConfig> Renditions(Channel channel)
+    {
+        var list = new List<RenditionConfig>();
+        if (channel.QualiteAdaptative >= 2 && channel.Height > 720)
+            list.Add(new RenditionConfig { Name = "mid", Height = 720, VideoBitrateKbps = Math.Min(2500, channel.VideoBitrateKbps * 2 / 3), AudioBitrateKbps = 128 });
+        if (channel.QualiteAdaptative >= 1 && channel.Height > 360)
+            list.Add(new RenditionConfig { Name = "low", Height = 360, VideoBitrateKbps = 800, AudioBitrateKbps = 96 });
+        return list;
     }
 
     private static OverlayConfig Overlays(Channel channel, string dir)

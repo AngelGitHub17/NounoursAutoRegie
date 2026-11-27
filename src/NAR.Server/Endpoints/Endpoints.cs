@@ -52,7 +52,7 @@ public static class Endpoints
             foreach (var c in channels)
             {
                 sb.Append(CultureInfo.InvariantCulture, $"#EXTINF:-1 tvg-id=\"nar-{c.Id}\" tvg-chno=\"{c.Number}\" group-title=\"NounoursCorp\",{c.Name}\n");
-                sb.Append(CultureInfo.InvariantCulture, $"{root}/live/{c.Id}/index.m3u8{q}\n");
+                sb.Append(CultureInfo.InvariantCulture, $"{root}/live/{c.Id}/{c.PlaylistName}{q}\n");
             }
             http.Response.Headers.AccessControlAllowOrigin = "*";
             return Results.Text(sb.ToString(), "audio/x-mpegurl");

@@ -23,6 +23,11 @@ window.narPlayer = {
       if (!(window.Hls && Hls.isSupported())) return;
       const hls = new Hls({
         lowLatencyMode: false,
+        // Qualité adaptative : pas plus que la taille du lecteur à l'écran (aperçu léger,
+        // pleine qualité en plein écran), et départ prudent pour démarrer vite.
+        capLevelToPlayerSize: true,
+        abrEwmaDefaultEstimate: 1000000,
+        startLevel: 0,
         liveSyncDurationCount: 3,        // ~3 segments derrière le direct
         liveMaxLatencyDurationCount: 8,  // au-delà : on revient au direct
         maxLiveSyncPlaybackRate: 1.05,   // petit retard : rattrapé en accélérant à peine
